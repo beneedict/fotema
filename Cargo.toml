@@ -35,10 +35,15 @@ i18n-embed-fl = "0.10.0"
 unic-langid = "0.9.5"
 lazy_static = "1.4.0"
 libshumate-sys = "0.8.0"
-h3o = "0.10.0"
+# Pinned: h3o >= 0.9.5 uses `f64::mul_add` in a const fn, which is not yet
+# stable, so those versions fail to build on current stable Rust. 0.9.4 is the
+# last version that builds. Revisit once const mul_add is stable.
+h3o = "=0.9.4"
 ashpd = { version = "0.13.11", default-features = false, features = ["async-io", "documents", "file_chooser", "gtk4"] }
 regex = "1.12.2"
 deadpool = "0.13.0"
+serde = { version = "1.0", features = ["derive"] }
+ureq = { version = "3", features = ["json"] }
 
 [dependencies.shumate]
 package = "libshumate"
