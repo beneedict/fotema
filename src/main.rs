@@ -27,6 +27,39 @@ use tracing_subscriber::filter::LevelFilter;
 relm4::new_action_group!(AppActionGroup, "app");
 relm4::new_stateless_action!(QuitAction, AppActionGroup, "quit");
 
+/// Point ONNX Runtime (`ort`, loaded dynamically) at a compatible shared
+/// library. The `ort` version Fotema uses hangs during session creation against
+/// some system onnxruntime builds (e.g. Ubuntu's 1.23). If the user/distro has
+/// not already pinned a library via `ORT_DYLIB_PATH`, look for a bundled one.
+///
+/// Must run before any threads are spawned (set_var is not thread-safe).
+fn setup_onnxruntime() {
+    if std::env::var_os("ORT_DYLIB_PATH").is_some() {
+        return;
+    }
+
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(dir) = std::env::var_os("FOTEMA_ORT_DIR") {
+        candidates.push(std::path::Path::new(&dir).join("libonnxruntime.so"));
+    }
+    candidates.push("/usr/lib/fotema/libonnxruntime.so".into());
+    candidates.push("/usr/lib/x86_64-linux-gnu/fotema/libonnxruntime.so".into());
+    if let Some(home) = std::env::var_os("HOME") {
+        candidates.push(std::path::Path::new(&home).join(".local/lib/fotema/libonnxruntime.so"));
+    }
+
+    if let Some(lib) = candidates.into_iter().find(|p| p.exists()) {
+        // SAFETY: called at the very start of main(), before any threads spawn.
+        unsafe { std::env::set_var("ORT_DYLIB_PATH", &lib) };
+        tracing::info!("Using bundled ONNX Runtime at {}", lib.display());
+    } else {
+        tracing::warn!(
+            "No bundled ONNX Runtime found; face detection relies on a compatible \
+             system libonnxruntime or ORT_DYLIB_PATH"
+        );
+    }
+}
+
 fn main() {
     gtk::init().unwrap();
 
@@ -44,6 +77,9 @@ fn main() {
         .with_env_filter(env_filter)
         .compact()
         .init();
+
+    // Point ONNX Runtime at a compatible library before any background work.
+    setup_onnxruntime();
 
     // setup gettext
     gettextrs::setlocale(LocaleCategory::LcAll, "");
