@@ -57,10 +57,20 @@ pub fn check(installed: &str) -> Option<String> {
     }
 }
 
-/// Numeric, segment-wise semver comparison. Missing segments count as 0, so
-/// patch releases (2.4.2 -> 2.4.3) are detected, not just major/minor.
+/// The numeric `X.Y.Z` core of a version string: drops a leading `v` and
+/// anything from the first `-` or `+` onward. This strips the local build
+/// suffix (e.g. `2.5.0-01`, `2.5.0-02`) and any pre-release/build metadata so
+/// the build number never affects update detection.
+fn core(version: &str) -> &str {
+    let v = version.strip_prefix('v').unwrap_or(version);
+    v.split(['-', '+']).next().unwrap_or(v)
+}
+
+/// Numeric, segment-wise version comparison of the `X.Y.Z` cores. Missing
+/// segments count as 0, so patch releases (2.4.2 -> 2.4.3) are detected, not
+/// just major/minor. The local build suffix is ignored (see [`core`]).
 fn is_newer(latest: &str, installed: &str) -> bool {
-    let parse = |v: &str| -> Vec<u32> { v.split('.').filter_map(|p| p.parse().ok()).collect() };
+    let parse = |v: &str| -> Vec<u32> { core(v).split('.').filter_map(|p| p.parse().ok()).collect() };
     let latest = parse(latest);
     let installed = parse(installed);
 
@@ -93,5 +103,19 @@ mod tests {
         assert!(!is_newer("2.4.1", "2.4.2"));
         assert!(!is_newer("2.4.2", "2.4.2.0"));
         assert!(!is_newer("1.0.0", "2.0.0"));
+    }
+
+    #[test]
+    fn ignores_build_suffix() {
+        // The local build suffix (-01, -02, ...) must not look like an update.
+        assert!(!is_newer("2.5.0", "2.5.0-01"));
+        assert!(!is_newer("2.5.0", "2.5.0-42"));
+        // A genuinely newer release is still detected against a suffixed build.
+        assert!(is_newer("2.5.1", "2.5.0-01"));
+        assert!(is_newer("v2.6.0", "2.5.0-03"));
+        // Older core -> no update, regardless of suffix.
+        assert!(!is_newer("2.4.2", "2.5.0-01"));
+        // Suffix on the latest tag is handled too.
+        assert!(is_newer("2.5.1-01", "2.5.0-09"));
     }
 }
