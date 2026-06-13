@@ -64,6 +64,7 @@ use self::components::{
     library::{Library, LibraryInput, LibraryOutput},
     onboard::{Onboard, OnboardOutput},
     preferences::{PreferencesDialog, PreferencesInput, PreferencesOutput},
+    viewer::face_thumbnails::{FaceThumbnails, FaceThumbnailsInput},
     viewer::view_nav::{ViewNav, ViewNavInput, ViewNavOutput},
 };
 
@@ -91,6 +92,7 @@ pub enum ViewName {
     Folder,
     People,
     Person,
+    Faces,
     Places,
     Selfies,
 }
@@ -113,6 +115,7 @@ impl FromStr for ViewName {
             "Folder" => ::core::result::Result::Ok(ViewName::Folder),
             "People" => ::core::result::Result::Ok(ViewName::People),
             "Person" => ::core::result::Result::Ok(ViewName::Person),
+            "Faces" => ::core::result::Result::Ok(ViewName::Faces),
             "Places" => ::core::result::Result::Ok(ViewName::Places),
             "Selfies" => ::core::result::Result::Ok(ViewName::Selfies),
             _ => ::core::result::Result::Err(::strum::ParseError::VariantNotFound),
@@ -211,6 +214,9 @@ pub(super) struct App {
 
     /// Album with photos overlayed onto a map
     people_page: Controller<PeopleAlbum>,
+
+    // Grid of all detected, not-yet-named faces.
+    faces_page: AsyncController<FaceThumbnails>,
 
     // Album for individual person.
     person_album: Controller<PersonAlbum>,
@@ -498,6 +504,14 @@ impl SimpleAsyncComponent for App {
                                             set_name: ViewName::People.as_ref(),
                                         },
 
+                                        add_child = &gtk::ScrolledWindow {
+                                            set_vexpand: true,
+                                            set_child: Some(model.faces_page.widget()),
+                                        } -> {
+                                            set_title: &fl!("faces-page"),
+                                            set_name: ViewName::Faces.as_ref(),
+                                        },
+
                                         add_child = &gtk::Box {
                                             set_orientation: gtk::Orientation::Vertical,
                                             container_add: model.places_page.widget(),
@@ -762,6 +776,10 @@ impl SimpleAsyncComponent for App {
             PeopleAlbumInput::Adapt(*layout)
         });
 
+        let faces_page = FaceThumbnails::builder()
+            .launch(people_repo.clone())
+            .detach();
+
         let person_album = PersonAlbum::builder()
             .launch((
                 state.clone(),
@@ -871,6 +889,7 @@ impl SimpleAsyncComponent for App {
             motion_page,
             videos_page,
             people_page,
+            faces_page,
             person_album,
             places_page,
             selfies_page,
@@ -1031,6 +1050,7 @@ impl SimpleAsyncComponent for App {
                     ViewName::Folder => self.folder_album.emit(AlbumInput::Activate),
                     ViewName::People => self.people_page.emit(PeopleAlbumInput::Activate),
                     ViewName::Person => self.person_album.emit(PersonAlbumInput::Activate),
+                    ViewName::Faces => self.faces_page.emit(FaceThumbnailsInput::ViewAllUnnamed),
                     ViewName::Places => self.places_page.emit(PlacesAlbumInput::Activate),
                     ViewName::Nothing => warn!("Nothing activated... which should not happen"),
                 }
@@ -1067,6 +1087,8 @@ impl SimpleAsyncComponent for App {
             AppMsg::PersonDeleted => {
                 self.picture_navigation_view.pop();
                 self.people_page.emit(PeopleAlbumInput::Refresh);
+                // A deleted person's faces become unnamed again.
+                self.faces_page.emit(FaceThumbnailsInput::ViewAllUnnamed);
             }
             AppMsg::PersonRenamed => {
                 self.people_page.emit(PeopleAlbumInput::Refresh);
