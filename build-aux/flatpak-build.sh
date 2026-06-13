@@ -35,17 +35,20 @@ trap restore_versions EXIT
 n=$(( $(cat "$COUNTER" 2>/dev/null || echo 0) + 1 ))
 suffix=$(printf '%02d' "$n")
 
-# Canonical upstream version = the version of the latest metainfo <release>
-# (this is what `flatpak info` shows). Use it as the single base for everything
-# so the in-app VERSION, the Flatpak version and the update check all agree.
-base=$(grep -m1 -oP '<release version="\K[0-9.]+' "$METAINFO")
-echo ">> Build $base-$suffix (upstream version $base + build suffix -$suffix)"
+# Canonical version = the latest Fotema git release tag (e.g. v2.4.2). This is
+# the authoritative current version; fall back to the meson project version if
+# tags are unavailable. Used as the single base everywhere so the in-app
+# VERSION, the Flatpak version and the update check all agree.
+base=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+[ -n "$base" ] || base=$(grep -m1 -oP "version: '\K[0-9.]+" meson.build)
+echo ">> Build $base-$suffix (Fotema git version $base + build suffix -$suffix)"
 
 # In-app VERSION = project_version + version_suffix. Sync the project version to
-# the canonical base (meson.build's own version may lag) and set the suffix.
+# the git base (meson.build's own value may lag) and set the suffix.
 sed -i "0,/version: '[0-9.]*'/s//version: '$base'/" meson.build
 sed -i "s/version_suffix = ''/version_suffix = '-$suffix'/" meson.build
-# Flatpak/AppStream version: base + suffix on the top metainfo <release>.
+# Flatpak/AppStream version: base + suffix on the top metainfo <release>
+# (overrides the metainfo's own release number for the build).
 sed -i "0,/<release version=\"[0-9.]*\"/s//<release version=\"$base-$suffix\"/" "$METAINFO"
 
 REPO="$STATE/repo"
