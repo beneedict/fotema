@@ -12,6 +12,9 @@ target/
 *.ui.in~
 *.ui~
 /.flatpak/
+/fotema.flatpak
+/.flatpak-build.log
+/build-aux/.build-number
 /vendor
 /.vscode
 .flatpak-builder/
