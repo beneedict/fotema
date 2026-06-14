@@ -77,7 +77,7 @@ pub fn setup_vaapi(ctx: &mut Context) -> bool {
 }
 
 /// True when `frame` lives in a VAAPI surface and must be copied to system
-/// memory before software processing (scaling, PNG encode).
+/// memory before software processing (scaling, thumbnail encode).
 pub fn is_hw_frame(frame: &Video) -> bool {
     frame.format() == Pixel::VAAPI
 }
