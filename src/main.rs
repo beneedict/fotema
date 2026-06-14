@@ -42,6 +42,8 @@ fn setup_onnxruntime() {
     if let Some(dir) = std::env::var_os("FOTEMA_ORT_DIR") {
         candidates.push(std::path::Path::new(&dir).join("libonnxruntime.so"));
     }
+    // Flatpak: the bundled runtime is installed in the app prefix.
+    candidates.push("/app/lib/libonnxruntime.so".into());
     candidates.push("/usr/lib/fotema/libonnxruntime.so".into());
     candidates.push("/usr/lib/x86_64-linux-gnu/fotema/libonnxruntime.so".into());
     if let Some(home) = std::env::var_os("HOME") {
