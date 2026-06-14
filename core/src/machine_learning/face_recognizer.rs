@@ -16,7 +16,7 @@ use opencv::prelude::*;
 
 use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
 
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::people::model::{DetectedFace, PersonForRecognition, PersonId};
 
@@ -54,6 +54,15 @@ impl FaceRecognizer {
                 FaceRecognizerSF::create_def(&recognizer.model_path.to_string_lossy(), "")?;
 
             let face_img = imgcodecs::imread_def(&person.face.face_path.to_string_lossy())?;
+            if face_img.empty() {
+                // Unreadable crop (e.g. a codec OpenCV wasn't built with): skip
+                // this person rather than failing the whole recognition pass.
+                warn!(
+                    "Skipping person {}: unreadable face image {:?}",
+                    person.person_id, person.face.face_path
+                );
+                continue;
+            }
 
             let face_landarks = person.face.landmarks_as_mat();
 
@@ -75,6 +84,9 @@ impl FaceRecognizer {
             FaceRecognizerSF::create_def(&self.model_path.to_string_lossy(), "")?;
 
         let face_img = imgcodecs::imread_def(&unknown_face.face_path.to_string_lossy())?;
+        if face_img.empty() {
+            return Ok(None);
+        }
 
         let face_landmarks = unknown_face.landmarks_as_mat();
 
@@ -156,6 +168,12 @@ impl FaceRecognizer {
         face: &DetectedFace,
     ) -> Result<Vec<f32>> {
         let face_img = imgcodecs::imread_def(&face.face_path.to_string_lossy())?;
+        if face_img.empty() {
+            return Err(anyhow!(
+                "Face crop unreadable (empty image): {:?}",
+                face.face_path
+            ));
+        }
         let landmarks = face.landmarks_as_mat();
         let mut aligned = Mat::default();
         recognizer.align_crop(&face_img, &landmarks, &mut aligned)?;
