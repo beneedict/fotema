@@ -64,7 +64,7 @@ use self::components::{
     library::{Library, LibraryInput, LibraryOutput},
     onboard::{Onboard, OnboardOutput},
     preferences::{PreferencesDialog, PreferencesInput, PreferencesOutput},
-    viewer::face_thumbnails::{FaceThumbnails, FaceThumbnailsInput},
+    viewer::unknown_people::{UnknownPeople, UnknownPeopleInput},
     viewer::view_nav::{ViewNav, ViewNavInput, ViewNavOutput},
 };
 
@@ -216,7 +216,7 @@ pub(super) struct App {
     people_page: Controller<PeopleAlbum>,
 
     // Grid of all detected, not-yet-named faces.
-    faces_page: AsyncController<FaceThumbnails>,
+    faces_page: AsyncController<UnknownPeople>,
 
     // Album for individual person.
     person_album: Controller<PersonAlbum>,
@@ -298,6 +298,9 @@ pub(super) enum AppMsg {
     ScanPictureForFaces(PictureId),
     ScanPicturesForFaces,
 
+    /// Re-import person names from photo XMP metadata across the library.
+    RescanFaceTags,
+
     ProcessMotionPhotos,
 
     // Stop all background tasks
@@ -329,6 +332,7 @@ relm4::new_action_group!(pub(super) WindowActionGroup, "win");
 relm4::new_stateless_action!(PreferencesAction, WindowActionGroup, "preferences");
 relm4::new_stateless_action!(AboutAction, WindowActionGroup, "about");
 relm4::new_stateless_action!(CheckForUpdatesAction, WindowActionGroup, "check-for-updates");
+relm4::new_stateless_action!(ScanFaceTagsAction, WindowActionGroup, "scan-face-tags");
 
 #[relm4::component(pub async)]
 impl SimpleAsyncComponent for App {
@@ -341,6 +345,7 @@ impl SimpleAsyncComponent for App {
         primary_menu: {
             section! {
                 &fl!("primary-menu-preferences") => PreferencesAction,
+                &fl!("primary-menu-scan-face-tags") => ScanFaceTagsAction,
                 &fl!("primary-menu-check-updates") => CheckForUpdatesAction,
                 &fl!("primary-menu-about") => AboutAction,
             }
@@ -504,9 +509,9 @@ impl SimpleAsyncComponent for App {
                                             set_name: ViewName::People.as_ref(),
                                         },
 
-                                        add_child = &gtk::ScrolledWindow {
-                                            set_vexpand: true,
-                                            set_child: Some(model.faces_page.widget()),
+                                        add_child = &gtk::Box {
+                                            set_orientation: gtk::Orientation::Vertical,
+                                            container_add: model.faces_page.widget(),
                                         } -> {
                                             set_title: &fl!("faces-page"),
                                             set_name: ViewName::Faces.as_ref(),
@@ -712,6 +717,7 @@ impl SimpleAsyncComponent for App {
             ))
             .forward(sender.input_sender(), |msg| match msg {
                 AlbumOutput::Selected(id, filter) => AppMsg::View(id, filter),
+                AlbumOutput::SecondaryClick(_) => AppMsg::Ignore,
                 AlbumOutput::ScrollOffset(_) => AppMsg::Ignore,
             });
 
@@ -733,6 +739,7 @@ impl SimpleAsyncComponent for App {
             ))
             .forward(sender.input_sender(), |msg| match msg {
                 AlbumOutput::Selected(id, filter) => AppMsg::View(id, filter),
+                AlbumOutput::SecondaryClick(_) => AppMsg::Ignore,
                 AlbumOutput::ScrollOffset(_) => AppMsg::Ignore,
             });
 
@@ -752,6 +759,7 @@ impl SimpleAsyncComponent for App {
             ))
             .forward(sender.input_sender(), |msg| match msg {
                 AlbumOutput::Selected(id, filter) => AppMsg::View(id, filter),
+                AlbumOutput::SecondaryClick(_) => AppMsg::Ignore,
                 AlbumOutput::ScrollOffset(_) => AppMsg::Ignore,
             });
 
@@ -776,9 +784,13 @@ impl SimpleAsyncComponent for App {
             PeopleAlbumInput::Adapt(*layout)
         });
 
-        let faces_page = FaceThumbnails::builder()
+        let faces_page = UnknownPeople::builder()
             .launch(people_repo.clone())
             .detach();
+
+        adaptive_layout.subscribe(faces_page.sender(), |layout| {
+            UnknownPeopleInput::Adapt(*layout)
+        });
 
         let person_album = PersonAlbum::builder()
             .launch((
@@ -838,6 +850,7 @@ impl SimpleAsyncComponent for App {
             ))
             .forward(sender.input_sender(), |msg| match msg {
                 AlbumOutput::Selected(id, filter) => AppMsg::View(id, filter),
+                AlbumOutput::SecondaryClick(_) => AppMsg::Ignore,
                 AlbumOutput::ScrollOffset(_) => AppMsg::Ignore,
             });
 
@@ -938,9 +951,17 @@ impl SimpleAsyncComponent for App {
             })
         };
 
+        let scan_face_tags_action = {
+            let sender = sender.clone();
+            RelmAction::<ScanFaceTagsAction>::new_stateless(move |_| {
+                sender.input(AppMsg::RescanFaceTags);
+            })
+        };
+
         actions.add_action(about_action);
         actions.add_action(preferences_action);
         actions.add_action(check_for_updates_action);
+        actions.add_action(scan_face_tags_action);
 
         actions.register_for_widget(&widgets.main_window);
 
@@ -1050,7 +1071,7 @@ impl SimpleAsyncComponent for App {
                     ViewName::Folder => self.folder_album.emit(AlbumInput::Activate),
                     ViewName::People => self.people_page.emit(PeopleAlbumInput::Activate),
                     ViewName::Person => self.person_album.emit(PersonAlbumInput::Activate),
-                    ViewName::Faces => self.faces_page.emit(FaceThumbnailsInput::ViewAllUnnamed),
+                    ViewName::Faces => self.faces_page.emit(UnknownPeopleInput::Refresh),
                     ViewName::Places => self.places_page.emit(PlacesAlbumInput::Activate),
                     ViewName::Nothing => warn!("Nothing activated... which should not happen"),
                 }
@@ -1088,7 +1109,7 @@ impl SimpleAsyncComponent for App {
                 self.picture_navigation_view.pop();
                 self.people_page.emit(PeopleAlbumInput::Refresh);
                 // A deleted person's faces become unnamed again.
-                self.faces_page.emit(FaceThumbnailsInput::ViewAllUnnamed);
+                self.faces_page.emit(UnknownPeopleInput::Refresh);
             }
             AppMsg::PersonRenamed => {
                 self.people_page.emit(PeopleAlbumInput::Refresh);
@@ -1165,6 +1186,10 @@ impl SimpleAsyncComponent for App {
             AppMsg::ScanPicturesForFaces => {
                 info!("Scan pictures for faces");
                 self.bootstrap.emit(BootstrapInput::ScanPicturesForFaces);
+            }
+            AppMsg::RescanFaceTags => {
+                info!("Re-import face tags from photo metadata");
+                self.bootstrap.emit(BootstrapInput::RescanForFaceTags);
             }
             AppMsg::ProcessMotionPhotos => {
                 info!("Process motion photos");
