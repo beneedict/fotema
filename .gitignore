@@ -21,12 +21,3 @@ target/
 
 # Local sample media for testing (not part of the project)
 /Beispielfotos/
-
-# Debian packaging build artifacts (only the source files under debian/ are tracked)
-/debian/.debhelper/
-/debian/files
-/debian/fotema/
-/debian/fotema.substvars
-/debian/*.debhelper.log
-/debian/debhelper-build-stamp
-/debian/*.substvars
