@@ -330,11 +330,6 @@ impl SimpleAsyncComponent for UnknownPeople {
     async fn update(&mut self, msg: Self::Input, sender: AsyncComponentSender<Self>) {
         match msg {
             UnknownPeopleInput::Refresh => {
-                // Remember the scroll position so naming/ignoring a face doesn't
-                // bounce the user to the top — they carry on roughly where they
-                // were. Captured before clearing (which resets the adjustment).
-                let scroll = self.avatars.vadjustment().value();
-
                 self.face_grid.clear();
 
                 // Query + greedy O(n²) clustering of ~10k faces (512-dim) is
@@ -411,12 +406,6 @@ impl SimpleAsyncComponent for UnknownPeople {
                     self.status
                         .set_description(Some(&fl!("faces-page-empty", "description")));
                 }
-
-                // Restore the remembered position once the new grid is laid out.
-                if scroll > 0.0 {
-                    let vadj = self.avatars.vadjustment();
-                    gtk::glib::idle_add_local_once(move || vadj.set_value(scroll));
-                }
             }
             UnknownPeopleInput::SelectionChanged => {
                 // Collect all currently selected faces (in grid order).
@@ -463,7 +452,7 @@ impl SimpleAsyncComponent for UnknownPeople {
                 }
                 self.selected_faces.clear();
                 self.ignore_button.set_sensitive(false);
-                // The acted-on faces leave the current view: reload (keeps scroll).
+                // The acted-on faces leave the current view: reload.
                 sender.input(UnknownPeopleInput::Refresh);
             }
             UnknownPeopleInput::ShowIgnoredFaces(show) => {

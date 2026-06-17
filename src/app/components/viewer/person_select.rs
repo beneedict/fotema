@@ -28,12 +28,9 @@ pub enum PersonSelectInput {
     /// Create (or reuse) a person with the typed name for the selected face(s).
     NewPerson,
 
-    /// Associate the selected face(s) with a person. Used on return key.
+    /// Associate the selected face(s) with a person. Emitted by each row's
+    /// own activate signal (mouse click or Enter), carrying the exact person.
     Associate(PersonId),
-
-    /// Associate the selected face(s) with a person picked with the mouse.
-    /// usize is index into the displayed people vector.
-    AssociateByIndex(usize),
 
     /// Complete the name entry to the best-matching known name (Tab key).
     Autocomplete,
@@ -60,10 +57,7 @@ pub struct PersonSelect {
     /// List of avatars for people.
     people_list: gtk::ListBox,
 
-    /// Person IDs of people, in the same order as `people_list`.
-    all_people: Vec<PersonId>,
-
-    /// Names of people, same order as `all_people`. Used for Tab autocomplete.
+    /// Names of people shown in `people_list`. Used for Tab autocomplete.
     all_names: Vec<String>,
 
     /// Faces to associate with a person (one, or several when multi-selected).
@@ -120,24 +114,19 @@ impl SimpleAsyncComponent for PersonSelect {
             .input_purpose(gtk::InputPurpose::Name)
             .build();
 
+        // Double-click (not single) to assign a known person: in the persistent
+        // "Unknown People" sidebar the grid is clicked constantly, so a stray
+        // single-click must not assign. A single click only highlights the row;
+        // a double-click activates it → assigns (no Enter needed).
         let people_list = gtk::ListBox::builder()
             .css_classes(["boxed-list"])
-            .activate_on_single_click(true)
+            .activate_on_single_click(false)
             .build();
 
-        {
-            let people_list2 = people_list.clone();
-            let sender = sender.clone();
-            people_list.connect_row_activated(move |_, row| {
-                if let Some(index) = people_list2.index_of_child(row) {
-                    if index >= 0 {
-                        sender.input(PersonSelectInput::AssociateByIndex(index as usize));
-                    } else {
-                        error!("Invalid vector index: {}", index);
-                    }
-                }
-            });
-        }
+        // Note: row activation is handled per-row in `populate()` via each row's
+        // own `activate` signal, which carries the exact person. We deliberately
+        // do NOT also connect the list box's `row-activated` here — having both
+        // fired `finish()` twice (double refresh) for one activation.
 
         // Suggest already-known names: live-filter the people list to those
         // whose name contains what the user is typing.
@@ -191,7 +180,6 @@ impl SimpleAsyncComponent for PersonSelect {
             count_label,
             face_name,
             people_list,
-            all_people: vec![],
             all_names: vec![],
             face_ids: vec![],
         };
@@ -214,12 +202,6 @@ impl SimpleAsyncComponent for PersonSelect {
             }
             PersonSelectInput::Associate(person_id) => {
                 self.assign_all(person_id);
-                self.finish(&sender);
-            }
-            PersonSelectInput::AssociateByIndex(index) => {
-                if let Some(person_id) = self.all_people.get(index).copied() {
-                    self.assign_all(person_id);
-                }
                 self.finish(&sender);
             }
             PersonSelectInput::NewPerson => {
@@ -301,7 +283,6 @@ impl PersonSelect {
         sender: &AsyncComponentSender<Self>,
     ) {
         self.people_list.remove_all();
-        self.all_people.clear();
         self.all_names.clear();
         self.face_name.set_text("");
 
@@ -340,7 +321,6 @@ impl PersonSelect {
             }
 
             self.people_list.append(&row);
-            self.all_people.push(person.person_id);
         }
     }
 
@@ -357,7 +337,6 @@ impl PersonSelect {
     /// Reset the selector and notify the parent that naming is done.
     fn finish(&mut self, sender: &AsyncComponentSender<Self>) {
         self.people_list.remove_all();
-        self.all_people.clear();
         self.all_names.clear();
         self.face_ids.clear();
         self.count_label.set_visible(false);
