@@ -187,10 +187,14 @@ impl Worker for PhotoThumbnailTask {
                         repo,
                         &thumbnails_path,
                         thumbnailer,
-                        progress_monitor,
-                        sender,
+                        progress_monitor.clone(),
+                        sender.clone(),
                     ) {
                         error!("Failed to update previews: {}", e);
+                        // enrich() failed before completing; clear the banner and
+                        // signal the queue so the next task can run.
+                        progress_monitor.emit(ProgressMonitorInput::Complete);
+                        let _ = sender.output(PhotoThumbnailTaskOutput::Completed(0));
                     }
                 });
             }

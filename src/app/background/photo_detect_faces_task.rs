@@ -234,8 +234,11 @@ impl Worker for PhotoDetectFacesTask {
 
                 // Avoid runtime panic from calling block_on
                 rayon::spawn(move || {
-                    if let Err(e) = this.detect_for_all(sender) {
+                    if let Err(e) = this.detect_for_all(sender.clone()) {
                         error!("Failed to extract photo faces: {}", e);
+                        // detect_for_all() failed before sending Completed;
+                        // signal it anyway so the task queue keeps advancing.
+                        let _ = sender.output(PhotoDetectFacesTaskOutput::Completed);
                     }
                 });
             }

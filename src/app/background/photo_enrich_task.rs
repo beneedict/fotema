@@ -120,6 +120,9 @@ impl Worker for PhotoEnrichTask {
                 rayon::spawn(move || {
                     if let Err(e) = PhotoEnrichTask::enrich(stop, repo, &sender) {
                         error!("Failed to update previews: {}", e);
+                        // enrich() failed before sending Completed; signal it
+                        // anyway so the bootstrap task queue keeps advancing.
+                        let _ = sender.output(PhotoEnrichTaskOutput::Completed(0));
                     }
                 });
             }
