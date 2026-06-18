@@ -71,17 +71,24 @@ pub enum PersonAlbumInput {
     /// Picture selected in underlying album
     Selected(VisualId),
 
-    /// Right-clicked a picture: show actions for that photo.
-    ContextMenu(PictureId),
+    /// Right-clicked a picture: show actions for the right-clicked photo plus any
+    /// others currently selected (bulk confirm/remove).
+    ContextMenu(Vec<PictureId>),
 
     /// Set this person's avatar from that picture.
     SetThumbnail(PictureId),
 
-    /// This picture's face is not this person: detach it (back to "unknown").
-    NotPerson(PictureId),
+    /// These pictures' faces are not this person: detach them (back to "unknown").
+    NotPerson(Vec<PictureId>),
 
     /// Reassign this picture's face to a different person.
     Reassign(PictureId),
+
+    /// Confirm unconfirmed (auto-suggested) faces for this person.
+    Confirm(Vec<PictureId>),
+
+    /// Toggle "show only suggestions" (unconfirmed faces) review mode.
+    ToggleReview,
 
     /// The reassignment person-picker finished.
     ReassignDone,
@@ -132,6 +139,11 @@ pub struct PersonAlbum {
     active_view: ActiveView,
     edge_length: I32Binding,
 
+    /// Whether the album currently shows only unconfirmed (auto-suggested) faces.
+    reviewing: bool,
+    /// Header toggle "Review suggestions (N)"; hidden when there are none.
+    review_button: gtk::ToggleButton,
+
     /// Person picker shown when reassigning a face to a different person.
     person_select: AsyncController<PersonSelect>,
     person_dialog: adw::Dialog,
@@ -162,6 +174,13 @@ impl SimpleComponent for PersonAlbum {
                 #[local_ref]
                 pack_end = &menu_button -> gtk::MenuButton {
                     set_icon_name: "open-menu-symbolic",
+                },
+
+                #[local_ref]
+                pack_start = &review_button -> gtk::ToggleButton {
+                    add_css_class: "suggested-action",
+                    set_visible: false,
+                    connect_toggled => PersonAlbumInput::ToggleReview,
                 },
             },
 
@@ -199,8 +218,8 @@ impl SimpleComponent for PersonAlbum {
             ))
             .forward(sender.input_sender(), |msg| match msg {
                 AlbumOutput::Selected(id, _) => PersonAlbumInput::Selected(id),
-                AlbumOutput::SecondaryClick(picture_id) => {
-                    PersonAlbumInput::ContextMenu(picture_id)
+                AlbumOutput::SecondaryClick(picture_ids) => {
+                    PersonAlbumInput::ContextMenu(picture_ids)
                 }
                 AlbumOutput::ScrollOffset(offset) => PersonAlbumInput::ScrollOffset(offset),
             });
@@ -240,6 +259,8 @@ impl SimpleComponent for PersonAlbum {
             .menu_model(&menu_active)
             .build();
 
+        let review_button = gtk::ToggleButton::new();
+
         let model = PersonAlbum {
             repo,
             person: None,
@@ -249,6 +270,8 @@ impl SimpleComponent for PersonAlbum {
             active_view,
             picture_ids: vec![],
             edge_length: I32Binding::new(NARROW_EDGE_LENGTH),
+            reviewing: false,
+            review_button: review_button.clone(),
             person_select,
             person_dialog,
             menu_button: menu_button.clone(),
@@ -326,22 +349,7 @@ impl SimpleComponent for PersonAlbum {
                     self.avatar.set_visible(true);
                 }
 
-                self.picture_ids = self
-                    .repo
-                    .find_pictures_for_person(person.person_id)
-                    .unwrap_or_default();
-                info!(
-                    "Person {} has {} items to view.",
-                    person.person_id,
-                    self.picture_ids.len()
-                );
                 self.album.sender().emit(AlbumInput::Activate);
-                self.album
-                    .sender()
-                    .emit(AlbumInput::Filter(AlbumFilter::Any(
-                        self.picture_ids.clone(),
-                    )));
-                self.album.sender().emit(AlbumInput::ScrollToTop);
 
                 // Offer "ignore" for a normal person, "restore" for a hidden one.
                 self.menu_button.set_menu_model(Some(if person.is_ignored {
@@ -352,6 +360,11 @@ impl SimpleComponent for PersonAlbum {
 
                 self.title.set_label(&person.name);
                 self.person = Some(person);
+
+                // New person: start in the normal (all photos) view; reload_pictures
+                // also refreshes the "review suggestions" toggle/count.
+                self.reviewing = false;
+                self.reload_pictures();
             }
             PersonAlbumInput::Selected(visual_id) => {
                 let _ = sender.output(PersonAlbumOutput::Selected(
@@ -359,25 +372,45 @@ impl SimpleComponent for PersonAlbum {
                     AlbumFilter::Any(self.picture_ids.clone()),
                 ));
             }
-            PersonAlbumInput::ContextMenu(picture_id) => {
+            PersonAlbumInput::ContextMenu(picture_ids) => {
                 let Some(person) = self.person.clone() else {
                     return;
                 };
-                if self.face_in_picture(&picture_id).is_none() {
+                let Some(&first) = picture_ids.first() else {
+                    return;
+                };
+                if self.face_in_picture(&first).is_none() {
                     return;
                 }
+                // Single-photo actions only make sense for exactly one selection;
+                // confirm/remove work on the whole selection.
+                let single = picture_ids.len() == 1;
 
                 let dialog = adw::AlertDialog::builder()
                     .heading(fl!("person-photo-action", "heading"))
                     .build();
-                dialog.add_response(
-                    "set-thumbnail",
-                    &fl!("person-photo-action", "set-thumbnail"),
-                );
-                dialog.add_response(
-                    "reassign",
-                    &fl!("person-photo-action", "reassign"),
-                );
+                if !single {
+                    dialog.set_body(&fl!(
+                        "person-photos-selected",
+                        count = picture_ids.len().to_string()
+                    ));
+                }
+                // In review mode the photos are unconfirmed suggestions: offer to
+                // confirm them as this person.
+                if self.reviewing {
+                    dialog.add_response(
+                        "confirm",
+                        &fl!("people-confirm-person", name = person.name.clone()),
+                    );
+                    dialog.set_response_appearance("confirm", adw::ResponseAppearance::Suggested);
+                }
+                if single {
+                    dialog.add_response(
+                        "set-thumbnail",
+                        &fl!("person-photo-action", "set-thumbnail"),
+                    );
+                    dialog.add_response("reassign", &fl!("person-photo-action", "reassign"));
+                }
                 dialog.add_response(
                     "not-person",
                     &fl!("people-not-this-person", name = person.name.clone()),
@@ -389,12 +422,12 @@ impl SimpleComponent for PersonAlbum {
 
                 {
                     let sender = sender.clone();
+                    let ids = picture_ids.clone();
                     dialog.connect_response(None, move |_, response| match response {
-                        "set-thumbnail" => {
-                            sender.input(PersonAlbumInput::SetThumbnail(picture_id))
-                        }
-                        "not-person" => sender.input(PersonAlbumInput::NotPerson(picture_id)),
-                        "reassign" => sender.input(PersonAlbumInput::Reassign(picture_id)),
+                        "confirm" => sender.input(PersonAlbumInput::Confirm(ids.clone())),
+                        "set-thumbnail" => sender.input(PersonAlbumInput::SetThumbnail(first)),
+                        "not-person" => sender.input(PersonAlbumInput::NotPerson(ids.clone())),
+                        "reassign" => sender.input(PersonAlbumInput::Reassign(first)),
                         _ => {}
                     });
                 }
@@ -424,13 +457,13 @@ impl SimpleComponent for PersonAlbum {
                     p.large_thumbnail_path = None;
                 }
             }
-            PersonAlbumInput::NotPerson(picture_id) => {
-                let Some(face) = self.face_in_picture(&picture_id) else {
-                    return;
-                };
-                if let Err(e) = self.repo.mark_not_person(face.face_id) {
-                    error!("Failed detaching face from person: {}", e);
-                    return;
+            PersonAlbumInput::NotPerson(picture_ids) => {
+                for picture_id in &picture_ids {
+                    if let Some(face) = self.face_in_picture(picture_id) {
+                        if let Err(e) = self.repo.mark_not_person(face.face_id) {
+                            error!("Failed detaching face from person: {}", e);
+                        }
+                    }
                 }
                 self.reload_pictures();
                 let _ = sender.output(PersonAlbumOutput::FacesChanged);
@@ -449,6 +482,26 @@ impl SimpleComponent for PersonAlbum {
             }
             PersonAlbumInput::ReassignDone => {
                 self.person_dialog.close();
+                self.reload_pictures();
+                let _ = sender.output(PersonAlbumOutput::FacesChanged);
+            }
+            PersonAlbumInput::ToggleReview => {
+                self.reviewing = self.review_button.is_active();
+                self.reload_pictures();
+            }
+            PersonAlbumInput::Confirm(picture_ids) => {
+                let Some(person) = self.person.clone() else {
+                    return;
+                };
+                // mark_as_person sets is_confirmed = TRUE → each face becomes a
+                // recognition reference and leaves the suggestions set.
+                for picture_id in &picture_ids {
+                    if let Some(face) = self.face_in_picture(picture_id) {
+                        if let Err(e) = self.repo.mark_as_person(face.face_id, person.person_id) {
+                            error!("Failed confirming face: {}", e);
+                        }
+                    }
+                }
                 self.reload_pictures();
                 let _ = sender.output(PersonAlbumOutput::FacesChanged);
             }
@@ -621,18 +674,46 @@ impl PersonAlbum {
             .find_map(|(face, p)| (p.map(|p| p.person_id) == Some(person_id)).then_some(face))
     }
 
-    /// Re-fetch the current person's pictures and re-filter the album, after a
-    /// face was detached or reassigned.
+    /// Re-fetch the current person's pictures and re-filter the album. Honours
+    /// the "review suggestions" mode and refreshes the review toggle (which shows
+    /// the count of unconfirmed/auto-suggested faces and is hidden when none).
     fn reload_pictures(&mut self) {
         let Some(person) = self.person.clone() else {
             return;
         };
-        self.picture_ids = self
+
+        let suggestions = self
             .repo
-            .find_pictures_for_person(person.person_id)
+            .find_unconfirmed_pictures_for_person(person.person_id)
             .unwrap_or_default();
+        let n = suggestions.len();
+
+        // Nothing left to review → leave review mode.
+        if n == 0 {
+            self.reviewing = false;
+        }
+        self.review_button.set_visible(n > 0);
+        self.review_button
+            .set_label(&fl!("person-review-suggestions", count = n.to_string()));
+        if self.review_button.is_active() != self.reviewing {
+            self.review_button.set_active(self.reviewing);
+        }
+
+        self.picture_ids = if self.reviewing {
+            suggestions
+        } else {
+            self.repo
+                .find_pictures_for_person(person.person_id)
+                .unwrap_or_default()
+        };
+        // In review mode a single click selects (for bulk confirm/remove);
+        // otherwise it opens the photo.
+        self.album
+            .sender()
+            .emit(AlbumInput::SetSelectMode(self.reviewing));
         self.album.sender().emit(AlbumInput::Filter(AlbumFilter::Any(
             self.picture_ids.clone(),
         )));
+        self.album.sender().emit(AlbumInput::ScrollToTop);
     }
 }

@@ -261,6 +261,18 @@ people-face-ignore = Ignore
 #   $name - name of person
 people-not-this-person = Not { $name }
 
+# Menu item to confirm an auto-suggested face as this person.
+# Variables:
+#   $name - name of person
+people-confirm-person = Confirm { $name }
+
+# Header toggle that filters a person's album to only unconfirmed (auto-suggested)
+# faces, with the count. Variables: $count - number of suggestions.
+person-review-suggestions = Review suggestions ({ $count })
+
+# Dialog body when acting on several selected photos at once.
+person-photos-selected = { $count } photos selected
+
 ## Preferences
 
 # Title of preferences dialog

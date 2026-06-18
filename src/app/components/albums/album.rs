@@ -47,6 +47,10 @@ pub enum AlbumInput {
     /// User right-clicked a picture in the grid.
     SecondaryClick(PictureId),
 
+    /// Selection mode: when on, a single click selects (multi-select) instead of
+    /// opening the photo — used for the person album's bulk review/confirm.
+    SetSelectMode(bool),
+
     // Scroll to first photo of year/month.
     GoToMonth(YearMonth),
 
@@ -74,8 +78,10 @@ pub enum AlbumOutput {
     /// User has selected photo or video in grid view
     Selected(VisualId, AlbumFilter),
 
-    /// User right-clicked a picture in the grid.
-    SecondaryClick(PictureId),
+    /// User right-clicked a picture in the grid. Carries the current multi-
+    /// selection (the right-clicked picture is always included) so the consumer
+    /// can act on one or many photos at once.
+    SecondaryClick(Vec<PictureId>),
 
     // Scroll offset, in pixels.
     ScrollOffset(f64),
@@ -287,7 +293,7 @@ pub struct Album {
     state: SharedState,
     active_view: ActiveView,
     view_name: ViewName,
-    photo_grid: TypedGridView<PhotoGridItem, gtk::SingleSelection>,
+    photo_grid: TypedGridView<PhotoGridItem, gtk::MultiSelection>,
     filter: AlbumFilter,
     sort: AlbumSort,
     edge_length: I32Binding,
@@ -399,7 +405,21 @@ impl SimpleComponent for Album {
                 }
             }
             AlbumInput::SecondaryClick(picture_id) => {
-                let _ = sender.output(AlbumOutput::SecondaryClick(picture_id));
+                // Act on the whole multi-selection when the right-clicked picture
+                // is part of it; otherwise just the right-clicked one.
+                let mut ids = self.selected_picture_ids();
+                if !ids.contains(&picture_id) {
+                    ids = vec![picture_id];
+                }
+                let _ = sender.output(AlbumOutput::SecondaryClick(ids));
+            }
+            AlbumInput::SetSelectMode(select) => {
+                // In select mode a single click selects (for multi-select);
+                // otherwise it opens the photo.
+                self.photo_grid.view.set_single_click_activate(!select);
+                if !select {
+                    self.photo_grid.selection_model.unselect_all();
+                }
             }
             AlbumInput::GoToMonth(ym) => {
                 info!("Showing for month: {}", ym);
@@ -432,6 +452,23 @@ impl SimpleComponent for Album {
 }
 
 impl Album {
+    /// Picture ids of the currently multi-selected grid items. Reads the
+    /// selection bitset (visible positions) and maps via `get_visible`, because
+    /// the album filters its backing store (store positions != visible ones).
+    fn selected_picture_ids(&self) -> Vec<PictureId> {
+        let mut ids = Vec::new();
+        let selection = self.photo_grid.selection_model.selection();
+        for i in 0..selection.size() {
+            let pos = selection.nth(i as u32);
+            if let Some(item) = self.photo_grid.get_visible(pos) {
+                if let Some(picture_id) = item.borrow().visual.picture_id.clone() {
+                    ids.push(picture_id);
+                }
+            }
+        }
+        ids
+    }
+
     fn refresh(&mut self) {
         let mut all = {
             let data = self.state.read();
@@ -457,7 +494,31 @@ impl Album {
 
         // NOTE person album will in effect overide scrolling to the end
         // by sending a ScrollToTop command.
-        self.sort.scroll_to_end(&mut self.photo_grid);
+        self.scroll_to_end();
+    }
+
+    /// Scroll to the last item (mirrors AlbumSort::scroll_to_end, but for this
+    /// album's MultiSelection grid — relm4's selection bound is private, so the
+    /// shared helper can't be generic over the selection model).
+    fn scroll_to_end(&mut self) {
+        if self.photo_grid.is_empty() {
+            return;
+        }
+        // Filters hide items, so the last visible index is unknown: disable
+        // filters, scroll, re-enable.
+        for i in 0..self.photo_grid.filters_len() {
+            self.photo_grid.set_filter_status(i, false);
+        }
+        let index = match self.sort {
+            AlbumSort::Ascending => self.photo_grid.len() - 1,
+            AlbumSort::Descending => 0,
+        };
+        self.photo_grid
+            .view
+            .scroll_to(index, gtk::ListScrollFlags::SELECT, None);
+        for i in 0..self.photo_grid.filters_len() {
+            self.photo_grid.set_filter_status(i, true);
+        }
     }
 
     fn update_filter(&mut self) {
