@@ -207,7 +207,7 @@ impl SimpleComponent for PersonAlbum {
 
         let title = gtk::Label::builder().build();
 
-        let person_select = PersonSelect::builder().launch(repo.clone()).forward(
+        let person_select = PersonSelect::builder().launch((repo.clone(), false)).forward(
             sender.input_sender(),
             |msg| match msg {
                 PersonSelectOutput::Done => PersonAlbumInput::ReassignDone,

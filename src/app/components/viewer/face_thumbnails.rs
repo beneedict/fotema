@@ -285,7 +285,7 @@ impl SimpleAsyncComponent for FaceThumbnails {
 
         let widgets = view_output!();
 
-        let person_select = PersonSelect::builder().launch(people_repo.clone()).forward(
+        let person_select = PersonSelect::builder().launch((people_repo.clone(), false)).forward(
             sender.input_sender(),
             |msg| match msg {
                 PersonSelectOutput::Done => FaceThumbnailsInput::PersonSelected,

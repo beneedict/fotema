@@ -249,6 +249,10 @@ people-person-search =
 # Shown when several faces are selected to be named at once.
 people-selected-count = { $count } faces selected
 
+# Button under the suggestions list to assign the selected face(s) to the
+# highlighted (or typed) person.
+people-assign-button = Assign person
+
 # Menu item to ignore a face match because it is a random face or not a face.
 people-face-ignore = Ignore
 

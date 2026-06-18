@@ -292,12 +292,12 @@ impl SimpleAsyncComponent for UnknownPeople {
         status.set_title(&fl!("faces-page-empty", "title"));
         status.set_description(Some(&fl!("faces-page-empty", "description")));
 
-        let person_select = PersonSelect::builder().launch(people_repo.clone()).forward(
-            sender.input_sender(),
-            |msg| match msg {
+        // `true`: show the "Assign person" button (this is the unknown-people sidebar).
+        let person_select = PersonSelect::builder()
+            .launch((people_repo.clone(), true))
+            .forward(sender.input_sender(), |msg| match msg {
                 PersonSelectOutput::Done => UnknownPeopleInput::PersonSelected,
-            },
-        );
+            });
         let person_select_widget = person_select.widget().clone();
 
         let ignore_button = gtk::Button::new();

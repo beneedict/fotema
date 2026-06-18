@@ -29,8 +29,12 @@ pub enum PersonSelectInput {
     NewPerson,
 
     /// Associate the selected face(s) with a person. Emitted by each row's
-    /// own activate signal (mouse click or Enter), carrying the exact person.
+    /// own activate signal (mouse double-click), carrying the exact person.
     Associate(PersonId),
+
+    /// "Assign person" button: assign the selected face(s) to the highlighted
+    /// person in the list, or — if none is highlighted — to the typed name.
+    AssignSelected,
 
     /// Complete the name entry to the best-matching known name (Tab key).
     Autocomplete,
@@ -57,6 +61,13 @@ pub struct PersonSelect {
     /// List of avatars for people.
     people_list: gtk::ListBox,
 
+    /// "Assign person" button (only shown in the unknown-people sidebar).
+    assign_button: gtk::Button,
+
+    /// Person ids in the same order as the rows in `people_list`, so the
+    /// highlighted row can be mapped back to a person.
+    all_people: Vec<PersonId>,
+
     /// Names of people shown in `people_list`. Used for Tab autocomplete.
     all_names: Vec<String>,
 
@@ -66,7 +77,7 @@ pub struct PersonSelect {
 
 #[relm4::component(pub async)]
 impl SimpleAsyncComponent for PersonSelect {
-    type Init = people::Repository;
+    type Init = (people::Repository, bool);
     type Input = PersonSelectInput;
     type Output = PersonSelectOutput;
 
@@ -93,12 +104,22 @@ impl SimpleAsyncComponent for PersonSelect {
 
                 #[local_ref]
                 people_list -> gtk::ListBox,
-            }
+            },
+
+            // Always-visible, mouse-friendly alternative to double-click/Enter:
+            // assign the selected face(s) to the highlighted person (or typed name).
+            // Only shown in the unknown-people sidebar (hidden in the viewer).
+            #[local_ref]
+            assign_button -> gtk::Button {
+                set_label: &fl!("people-assign-button"),
+                add_css_class: "suggested-action",
+                connect_clicked => PersonSelectInput::AssignSelected,
+            },
         }
     }
 
     async fn init(
-        people_repo: Self::Init,
+        (people_repo, show_assign_button): Self::Init,
         root: Self::Root,
         sender: AsyncComponentSender<Self>,
     ) -> AsyncComponentParts<Self> {
@@ -172,6 +193,11 @@ impl SimpleAsyncComponent for PersonSelect {
             face_name.add_controller(key_controller);
         }
 
+        // Mouse-friendly "Assign person" button; only shown in the unknown-people
+        // sidebar (the viewer's bottom-sheet selector stays as upstream).
+        let assign_button = gtk::Button::new();
+        assign_button.set_visible(show_assign_button);
+
         let widgets = view_output!();
 
         let model = Self {
@@ -180,6 +206,8 @@ impl SimpleAsyncComponent for PersonSelect {
             count_label,
             face_name,
             people_list,
+            assign_button: assign_button.clone(),
+            all_people: vec![],
             all_names: vec![],
             face_ids: vec![],
         };
@@ -205,38 +233,24 @@ impl SimpleAsyncComponent for PersonSelect {
                 self.finish(&sender);
             }
             PersonSelectInput::NewPerson => {
-                let name = self.face_name.text().to_string();
-                let trimmed = name.trim();
-                if trimmed.is_empty() || self.face_ids.is_empty() {
-                    // Nothing typed / nothing selected: keep the selector open.
-                    return;
-                }
-
-                // Reuse a person with this exact name, else create one.
-                let person_id = match self.people_repo.find_person_id_by_name(trimmed) {
-                    Ok(Some(pid)) => Some(pid),
-                    Ok(None) => {
-                        let first = self.face_ids[0];
-                        if let Err(e) = self.people_repo.add_person(first, trimmed) {
-                            error!("Failed adding new person: {:?}", e);
-                            None
-                        } else {
-                            self.people_repo
-                                .find_person_id_by_name(trimmed)
-                                .ok()
-                                .flatten()
+                self.assign_typed_name(&sender);
+            }
+            PersonSelectInput::AssignSelected => {
+                // Prefer the highlighted known person in the list.
+                if let Some(row) = self.people_list.selected_row() {
+                    let idx = row.index();
+                    if idx >= 0 {
+                        if let Some(person_id) = self.all_people.get(idx as usize).copied() {
+                            if !self.face_ids.is_empty() {
+                                self.assign_all(person_id);
+                            }
+                            self.finish(&sender);
+                            return;
                         }
                     }
-                    Err(e) => {
-                        error!("Failed looking up person '{}': {:?}", trimmed, e);
-                        None
-                    }
-                };
-
-                if let Some(person_id) = person_id {
-                    self.assign_all(person_id);
                 }
-                self.finish(&sender);
+                // Nobody highlighted: fall back to the typed name (like Enter).
+                self.assign_typed_name(&sender);
             }
             PersonSelectInput::Autocomplete => {
                 let text = self.face_name.text().to_string();
@@ -283,6 +297,7 @@ impl PersonSelect {
         sender: &AsyncComponentSender<Self>,
     ) {
         self.people_list.remove_all();
+        self.all_people.clear();
         self.all_names.clear();
         self.face_name.set_text("");
 
@@ -305,6 +320,7 @@ impl PersonSelect {
             }
 
             self.all_names.push(person.name.clone());
+            self.all_people.push(person.person_id);
 
             let row = adw::ActionRow::builder()
                 .title(person.name)
@@ -324,6 +340,43 @@ impl PersonSelect {
         }
     }
 
+    /// Create or reuse a person with the typed name and assign the selected
+    /// face(s) to them — the Enter path, also used as the button's fallback.
+    fn assign_typed_name(&mut self, sender: &AsyncComponentSender<Self>) {
+        let name = self.face_name.text().to_string();
+        let trimmed = name.trim();
+        if trimmed.is_empty() || self.face_ids.is_empty() {
+            // Nothing typed / nothing selected: keep the selector open.
+            return;
+        }
+
+        // Reuse a person with this exact name, else create one.
+        let person_id = match self.people_repo.find_person_id_by_name(trimmed) {
+            Ok(Some(pid)) => Some(pid),
+            Ok(None) => {
+                let first = self.face_ids[0];
+                if let Err(e) = self.people_repo.add_person(first, trimmed) {
+                    error!("Failed adding new person: {:?}", e);
+                    None
+                } else {
+                    self.people_repo
+                        .find_person_id_by_name(trimmed)
+                        .ok()
+                        .flatten()
+                }
+            }
+            Err(e) => {
+                error!("Failed looking up person '{}': {:?}", trimmed, e);
+                None
+            }
+        };
+
+        if let Some(person_id) = person_id {
+            self.assign_all(person_id);
+        }
+        self.finish(sender);
+    }
+
     /// Associate every currently selected face with `person_id`.
     fn assign_all(&mut self, person_id: PersonId) {
         for face_id in self.face_ids.clone() {
@@ -337,6 +390,7 @@ impl PersonSelect {
     /// Reset the selector and notify the parent that naming is done.
     fn finish(&mut self, sender: &AsyncComponentSender<Self>) {
         self.people_list.remove_all();
+        self.all_people.clear();
         self.all_names.clear();
         self.face_ids.clear();
         self.count_label.set_visible(false);

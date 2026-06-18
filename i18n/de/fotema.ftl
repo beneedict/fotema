@@ -213,6 +213,7 @@ primary-menu-about = Info zu { -app-name }
 people-person-search =
     .placeholder = Name der Person
 people-selected-count = { $count } Gesichter ausgewählt
+people-assign-button = Person zuweisen
 people-face-ignore = Ignorieren
 people-not-this-person = Nicht { $name }
 prefs-views-faces = Gesichtserkennung
