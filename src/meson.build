@@ -27,9 +27,22 @@ run_command(
 )
 
 cargo_options = [ '--manifest-path', meson.project_source_root() / 'Cargo.toml' ]
-cargo_options += [ '--target-dir', meson.project_build_root() / 'src' ]
 
-if get_option('sandboxed')
+# Persistent cargo target dir / CARGO_HOME for faster incremental Flatpak
+# rebuilds: the fork's build script sets FOTEMA_CARGO_TARGET_DIR / FOTEMA_CARGO_HOME
+# to a cache mounted OUTSIDE the (wiped) build dir, so unchanged crates are not
+# recompiled or re-downloaded. Upstream/Flathub builds leave them unset and
+# behave exactly as before.
+cargo_target_dir = run_command('sh', '-c', 'printf %s "${FOTEMA_CARGO_TARGET_DIR:-}"', check: false).stdout().strip()
+if cargo_target_dir == ''
+  cargo_target_dir = meson.project_build_root() / 'src'
+endif
+cargo_options += [ '--target-dir', cargo_target_dir ]
+
+cargo_home = run_command('sh', '-c', 'printf %s "${FOTEMA_CARGO_HOME:-}"', check: false).stdout().strip()
+if cargo_home != ''
+  cargo_env = [ 'CARGO_HOME=' + cargo_home ]
+elif get_option('sandboxed')
   # This is the path used by flatpak-cargo-generator in flatpak-builder-tools
   # See https://github.com/flathub/app.fotema.Fotema
   cargo_env = [ 'CARGO_HOME=' + meson.project_source_root() / 'cargo' ]
@@ -61,6 +74,6 @@ cargo_build = custom_target(
     cargo, 'build',
     cargo_options,
     '&&',
-    'cp', 'src' / rust_target / meson.project_name(), '@OUTPUT@',
+    'cp', cargo_target_dir / rust_target / meson.project_name(), '@OUTPUT@',
   ]
 )

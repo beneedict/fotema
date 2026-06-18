@@ -20,16 +20,45 @@ STATE="$ROOT/.flatpak"
 COUNTER="$ROOT/build-aux/.build-number"
 BUNDLE="$ROOT/fotema.flatpak"
 
+# Persistent cargo cache OUTSIDE the (wiped) build dir, so the ~400 Rust crates
+# are not re-downloaded/recompiled every build. Injected into the fotema module
+# below; honoured by src/meson.build via FOTEMA_CARGO_TARGET_DIR / _HOME.
+CACHE="$STATE/cargo-cache"
+mkdir -p "$CACHE/target" "$CACHE/home"
+
 mkdir -p "$STATE/backup"
 
-# Keep the tracked version files at their upstream value: back up, restore on exit.
+# Keep the tracked files at their upstream value: back up, restore on exit.
 cp meson.build "$STATE/backup/meson.build"
 cp "$METAINFO" "$STATE/backup/metainfo.xml"
+cp "$MANIFEST" "$STATE/backup/manifest.json"
 restore_versions() {
     cp "$STATE/backup/meson.build" meson.build
     cp "$STATE/backup/metainfo.xml" "$METAINFO"
+    cp "$STATE/backup/manifest.json" "$MANIFEST"
 }
 trap restore_versions EXIT
+
+# Inject the persistent cargo cache into the fotema module (mount + env). The
+# tracked manifest stays generic; restored on exit by the trap above.
+python3 - "$MANIFEST" "$CACHE" <<'PY'
+import json, sys
+path, cache = sys.argv[1], sys.argv[2]
+m = json.load(open(path))
+for mod in m.get("modules", []):
+    if isinstance(mod, dict) and mod.get("name") == "fotema":
+        # Skip the ~8-minute test suite for local/personal builds.
+        mod.pop("run-tests", None)
+        bo = mod.setdefault("build-options", {})
+        args = bo.setdefault("build-args", [])
+        fs = "--filesystem=" + cache
+        if fs not in args:
+            args.append(fs)
+        env = bo.setdefault("env", {})
+        env["FOTEMA_CARGO_TARGET_DIR"] = cache + "/target"
+        env["FOTEMA_CARGO_HOME"] = cache + "/home"
+json.dump(m, open(path, "w"), indent=4)
+PY
 
 # Build number: -01 for the first build, then -02, ...
 n=$(( $(cat "$COUNTER" 2>/dev/null || echo 0) + 1 ))

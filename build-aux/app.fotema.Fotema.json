@@ -61,7 +61,18 @@
             "sources": [
                 {
                     "type": "dir",
-                    "path": "../"
+                    "path": "../",
+                    "skip": [
+                        "target",
+                        ".flatpak",
+                        ".flatpak-builder",
+                        ".git",
+                        "fotema.flatpak",
+                        "Beispielfotos",
+                        ".vscode",
+                        "_build",
+                        "builddir"
+                    ]
                 }
             ]
         }
