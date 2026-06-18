@@ -28,10 +28,6 @@ pub enum PersonSelectInput {
     /// Create (or reuse) a person with the typed name for the selected face(s).
     NewPerson,
 
-    /// Associate the selected face(s) with a person. Emitted by each row's
-    /// own activate signal (mouse double-click), carrying the exact person.
-    Associate(PersonId),
-
     /// "Assign person" button: assign the selected face(s) to the highlighted
     /// person in the list, or — if none is highlighted — to the typed name.
     AssignSelected,
@@ -144,10 +140,16 @@ impl SimpleAsyncComponent for PersonSelect {
             .activate_on_single_click(false)
             .build();
 
-        // Note: row activation is handled per-row in `populate()` via each row's
-        // own `activate` signal, which carries the exact person. We deliberately
-        // do NOT also connect the list box's `row-activated` here — having both
-        // fired `finish()` twice (double refresh) for one activation.
+        // Double-click activates the selected row → assign that person. Use the
+        // list box's reliable `row-activated` signal (a per-row `activate` on an
+        // adw::ActionRow does NOT fire dependably with single-click-activate off,
+        // which is why double-click appeared to do nothing).
+        {
+            let sender = sender.clone();
+            people_list.connect_row_activated(move |_, _| {
+                sender.input(PersonSelectInput::AssignSelected);
+            });
+        }
 
         // Suggest already-known names: live-filter the people list to those
         // whose name contains what the user is typing.
@@ -227,10 +229,6 @@ impl SimpleAsyncComponent for PersonSelect {
                 let rep = self.face_ids.first().copied();
                 let people = self.ranked_people(rep).await;
                 self.populate(&thumbnail, people, &sender);
-            }
-            PersonSelectInput::Associate(person_id) => {
-                self.assign_all(person_id);
-                self.finish(&sender);
             }
             PersonSelectInput::NewPerson => {
                 self.assign_typed_name(&sender);
@@ -329,12 +327,9 @@ impl PersonSelect {
 
             row.add_prefix(&avatar);
 
-            {
-                let sender = sender.clone();
-                row.connect_activate(move |_| {
-                    sender.input(PersonSelectInput::Associate(person.person_id));
-                });
-            }
+            // Activation (double-click / Enter) is handled at the list-box level
+            // via `connect_row_activated` → AssignSelected (assigns the selected
+            // row's person).
 
             self.people_list.append(&row);
         }
