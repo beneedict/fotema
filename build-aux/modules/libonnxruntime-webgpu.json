@@ -1,0 +1,17 @@
+{
+    "name": "libonnxruntime",
+    "buildsystem": "simple",
+    "build-commands": [
+        "cp -r --no-target-directory ./lib /app/lib"
+    ],
+    "sources": [
+        {
+            "type": "archive",
+            "only-arches": [
+                "x86_64"
+            ],
+            "url": "https://github.com/beneedict/fotema/releases/download/onnxruntime-webgpu-1.24.4/onnxruntime-webgpu-linux-x64-1.24.4.tgz",
+            "sha256": "131e2c03825a4c25092db620809414bbe5a035a1d54be67ac58ddc9bb5f1a2ec"
+        }
+    ]
+}

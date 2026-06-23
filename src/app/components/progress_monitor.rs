@@ -22,12 +22,14 @@ pub enum ThumbnailType {
 /// Note that some background tasks just have the banner and spinner.
 #[derive(Debug, Clone, Copy)]
 pub enum TaskName {
+    Scan,
     Enrich(MediaType),
     Thumbnail(ThumbnailType),
     Transcode,
     MotionPhoto,
     DetectFaces,
     RecognizeFaces,
+    ClipEmbed,
 
     /// FIXME figure out if 'Idle' will be used.
     Idle,
@@ -35,7 +37,11 @@ pub enum TaskName {
 
 #[derive(Debug)]
 pub enum ProgressMonitorInput {
+    /// Begin a task with a known number of items (determinate progress bar).
     Start(TaskName, usize),
+    /// Begin a task whose total is unknown (indeterminate / pulsing progress bar),
+    /// e.g. the filesystem scan, which discovers files as it goes.
+    StartPulse(TaskName),
     Advance,
     Complete,
 }
@@ -50,6 +56,12 @@ pub struct ProgressMonitor {
 
     // Final progress
     end_count: usize,
+
+    /// Whether the current task has an unknown total (pulsing bar).
+    indeterminate: bool,
+
+    /// Whether the current task has finished (bar should hide).
+    finished: bool,
 }
 
 impl ProgressMonitor {
@@ -61,8 +73,14 @@ impl ProgressMonitor {
         }
     }
 
-    pub fn is_complete(&self) -> bool {
-        self.current_count == self.end_count
+    /// Task total is unknown — the bar should pulse rather than show a fraction.
+    pub fn is_indeterminate(&self) -> bool {
+        self.indeterminate
+    }
+
+    /// Task has finished — the bar should be hidden.
+    pub fn is_finished(&self) -> bool {
+        self.finished
     }
 }
 
@@ -74,6 +92,8 @@ impl Reducible for ProgressMonitor {
             task_name: TaskName::Idle,
             current_count: 0,
             end_count: 0,
+            indeterminate: false,
+            finished: true,
         }
     }
 
@@ -83,6 +103,15 @@ impl Reducible for ProgressMonitor {
                 self.task_name = task_name;
                 self.end_count = end_count;
                 self.current_count = 0;
+                self.indeterminate = false;
+                self.finished = false;
+            }
+            ProgressMonitorInput::StartPulse(task_name) => {
+                self.task_name = task_name;
+                self.end_count = 0;
+                self.current_count = 0;
+                self.indeterminate = true;
+                self.finished = false;
             }
             ProgressMonitorInput::Advance => {
                 if self.current_count < self.end_count {
@@ -91,6 +120,7 @@ impl Reducible for ProgressMonitor {
             }
             ProgressMonitorInput::Complete => {
                 self.current_count = self.end_count;
+                self.finished = true;
             }
         }
         true // subscribers only notified if 'true' is returned

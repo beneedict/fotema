@@ -386,6 +386,12 @@ impl SimpleComponent for Album {
             AlbumInput::Filter(filter) => {
                 self.filter = filter;
                 self.update_filter();
+                // Search results must be rebuilt in relevance order (not the
+                // album's date order), so rebuild the grid immediately rather than
+                // only re-applying the visibility filter over date-sorted items.
+                if matches!(self.filter, AlbumFilter::SearchResults(_)) {
+                    self.refresh();
+                }
                 //self.scroll();
             }
             AlbumInput::Sort(sort) => {
@@ -482,8 +488,33 @@ impl Album {
                 .collect::<Vec<PhotoGridItem>>()
         };
 
-        // State is always in ascending time order
-        self.sort.sort(&mut all);
+        if let AlbumFilter::SearchResults(ref ids) = self.filter {
+            // Relevance order: keep only matched pictures and order them by their
+            // position in `ids` (best match first). PictureId isn't Hash, so key
+            // the rank lookup by the inner i64.
+            let rank: std::collections::HashMap<i64, usize> = ids
+                .iter()
+                .enumerate()
+                .map(|(i, id)| (id.id(), i))
+                .collect();
+            all.retain(|item| {
+                item.visual
+                    .picture_id
+                    .as_ref()
+                    .is_some_and(|pid| rank.contains_key(&pid.id()))
+            });
+            all.sort_by_key(|item| {
+                item.visual
+                    .picture_id
+                    .as_ref()
+                    .and_then(|pid| rank.get(&pid.id()))
+                    .copied()
+                    .unwrap_or(usize::MAX)
+            });
+        } else {
+            // State is always in ascending time order
+            self.sort.sort(&mut all);
+        }
 
         self.photo_grid.clear();
 
@@ -492,33 +523,47 @@ impl Album {
 
         info!("{} items added to album", self.photo_grid.len());
 
-        // NOTE person album will in effect overide scrolling to the end
-        // by sending a ScrollToTop command.
-        self.scroll_to_end();
+        if matches!(self.filter, AlbumFilter::SearchResults(_)) {
+            // Best match first, so show the top of the list.
+            if !self.photo_grid.is_empty() {
+                self.photo_grid
+                    .view
+                    .scroll_to(0, gtk::ListScrollFlags::SELECT, None);
+            }
+        } else {
+            // NOTE person album will in effect overide scrolling to the end
+            // by sending a ScrollToTop command.
+            self.scroll_to_end();
+        }
     }
 
-    /// Scroll to the last item (mirrors AlbumSort::scroll_to_end, but for this
-    /// album's MultiSelection grid — relm4's selection bound is private, so the
-    /// shared helper can't be generic over the selection model).
+    /// Scroll to the last item of the *filtered* view.
+    ///
+    /// Must index into the filtered/selection model (visible items), NOT the
+    /// backing store: on a filtered album like Videos the store holds all 33k
+    /// visuals but only the videos are visible, so scrolling to `store.len()-1`
+    /// targets an out-of-range index and the view stays at the top showing just
+    /// the first matching item.
+    ///
+    /// The filtered count is only settled *after* this update returns (reading it
+    /// synchronously is stale and scrolls to the top), so defer the scroll to the
+    /// next idle and read the visible count then.
     fn scroll_to_end(&mut self) {
-        if self.photo_grid.is_empty() {
-            return;
-        }
-        // Filters hide items, so the last visible index is unknown: disable
-        // filters, scroll, re-enable.
-        for i in 0..self.photo_grid.filters_len() {
-            self.photo_grid.set_filter_status(i, false);
-        }
-        let index = match self.sort {
-            AlbumSort::Ascending => self.photo_grid.len() - 1,
-            AlbumSort::Descending => 0,
-        };
-        self.photo_grid
-            .view
-            .scroll_to(index, gtk::ListScrollFlags::SELECT, None);
-        for i in 0..self.photo_grid.filters_len() {
-            self.photo_grid.set_filter_status(i, true);
-        }
+        let view = self.photo_grid.view.clone();
+        let selection = self.photo_grid.selection_model.clone();
+        let sort = self.sort;
+        gtk::glib::idle_add_local_once(move || {
+            let visible = selection.n_items();
+            info!("scroll_to_end: {} visible items", visible);
+            if visible == 0 {
+                return;
+            }
+            let index = match sort {
+                AlbumSort::Ascending => visible - 1,
+                AlbumSort::Descending => 0,
+            };
+            view.scroll_to(index, gtk::ListScrollFlags::SELECT, None);
+        });
     }
 
     fn update_filter(&mut self) {

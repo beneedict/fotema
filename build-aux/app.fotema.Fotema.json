@@ -14,7 +14,9 @@
         "--share=network",
         "--socket=wayland",
         "--socket=fallback-x11",
-        "--socket=pulseaudio"
+        "--socket=pulseaudio",
+        "--env=RUSTICL_ENABLE=iris,radeonsi",
+        "--env=OCL_ICD_VENDORS=/usr/lib/x86_64-linux-gnu/GL/default/lib/OpenCL/vendors"
     ],
     "build-options": {
         "append-path": "/usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm21/bin",

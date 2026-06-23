@@ -28,6 +28,18 @@ folder-album = Ordner
 # Title for places page which shows photos overlayed onto a map.
 places-page = Orte
 
+# Title for the smart-search page (free-text photo search).
+search-page = Suche
+
+# Placeholder text shown in the smart-search entry.
+search-placeholder = Fotos und Personen suchen…
+
+# Tooltip for the export button (export the current group of photos).
+export-tooltip = In Ordner exportieren…
+
+# Toast shown after exporting a group of photos.
+export-done = {$exported} von {$total} Fotos exportiert.
+
 ## Thumbnail decorations
 
 # Label on month album thumbnails.
@@ -161,6 +173,7 @@ prefs-views-selfies = Selfies
 ## Progress bar for background tasks
 
 # Extracting details from photo EXIF data
+progress-scan-photos = Suche nach neuen Fotos und Videos.
 progress-metadata-photos = Foto-Metadaten werden verarbeitet.
 # Extracting details from video container metadata
 progress-metadata-videos = Video-Metadaten werden verarbeitet.
@@ -218,6 +231,13 @@ people-face-ignore = Ignorieren
 people-not-this-person = Nicht { $name }
 people-confirm-person = { $name } bestätigen
 person-review-suggestions = Vorschläge prüfen ({ $count })
+person-review-tooltip = Automatische Vorschläge nach Konfidenz prüfen
+person-review-all-photos = Alle Fotos
+person-review-all-suggestions = Alle Vorschläge ({ $count })
+confidence-very-confident = Sehr sicher ({ $count })
+confidence-likely = Wahrscheinlich ({ $count })
+confidence-possible = Möglich ({ $count })
+confidence-weak = Schwacher Treffer ({ $count })
 person-photos-selected = { $count } Fotos ausgewählt
 prefs-views-faces = Gesichtserkennung
     .subtitle = Aktivieren Sie die Gesichtserkennung beim Starten von Fotema. Dies kann eine Weile dauern.
@@ -269,8 +289,11 @@ people-set-face-thumbnail = Als Vorschaubild verwenden
 people-set-name = Name festlegen
 progress-detect-faces-photos = Erkennung von Gesichtern auf Fotos.
 progress-recognize-faces-photos = Erkennen von Personen auf Fotos.
+progress-clip-embed-photos = Fotos werden für die Suche indexiert.
 banner-detect-faces-photos = Erkennen von Gesichtern auf Fotos. Dies wird eine Weile dauern.
 banner-recognize-faces-photos = Erkennen von Personen auf Fotos. Dies wird eine Weile dauern.
+banner-clip-embed-photos = Fotos werden für die Suche indexiert. Dies wird eine Weile dauern.
+person-menu-export = Fotos exportieren…
 person-menu-rename = Person umbenennen
 person-menu-delete = Person löschen
 person-menu-ignore = Person ignorieren

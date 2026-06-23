@@ -39,12 +39,35 @@ restore_versions() {
 }
 trap restore_versions EXIT
 
-# Inject the persistent cargo cache into the fotema module (mount + env). The
-# tracked manifest stays generic; restored on exit by the trap above.
-python3 - "$MANIFEST" "$CACHE" <<'PY'
+# onnxruntime variant: cpu | webgpu | webgpu-source.
+#   cpu           = stock prebuilt (Flathub default, no GPU)
+#   webgpu        = prebuilt GPU artifact (fast download; needs the release uploaded)
+#   webgpu-source = build the GPU runtime from source (~1h first time, then cached)
+# Default to the from-source GPU build so local installs keep GPU acceleration even
+# before the prebuilt artifact is published. The tracked manifest stays CPU-only
+# (restored on exit), so upstream/Flathub builds are unaffected.
+ORT_VARIANT="${FOTEMA_ORT:-webgpu-source}"
+echo ">> onnxruntime variant: $ORT_VARIANT (override with FOTEMA_ORT=cpu|webgpu|webgpu-source)"
+
+# Inject the persistent cargo cache into the fotema module (mount + env) and select
+# the onnxruntime module variant. The tracked manifest stays generic; restored on
+# exit by the trap above.
+python3 - "$MANIFEST" "$CACHE" "$ORT_VARIANT" <<'PY'
 import json, sys
-path, cache = sys.argv[1], sys.argv[2]
+path, cache, ort_variant = sys.argv[1], sys.argv[2], sys.argv[3]
 m = json.load(open(path))
+
+# Swap the onnxruntime module include for the requested variant.
+ort_module = {
+    "cpu": "modules/libonnxruntime.json",
+    "webgpu": "modules/libonnxruntime-webgpu.json",
+    "webgpu-source": "modules/libonnxruntime-webgpu-source.json",
+}.get(ort_variant, "modules/libonnxruntime.json")
+m["modules"] = [
+    ort_module if (isinstance(x, str) and x.endswith("libonnxruntime.json")) else x
+    for x in m.get("modules", [])
+]
+
 for mod in m.get("modules", []):
     if isinstance(mod, dict) and mod.get("name") == "fotema":
         # Skip the ~8-minute test suite for local/personal builds.

@@ -40,3 +40,19 @@ md5 = "0.8.0"
 thiserror = "2.0.18"
 byteorder = "1.5.0"
 quick-xml = "0.37.5"
+# CLIP smart search. `ort` is already pulled in transitively by rust-faces and the
+# onnxruntime dylib is bundled in the Flatpak and located via ORT_DYLIB_PATH
+# (see src/main.rs). Pin to the same version the lockfile already resolves and use
+# `load-dynamic` so we reuse that bundled library rather than linking a second copy.
+# default-features = false avoids pulling `download-binaries` (which would try to
+# fetch onnxruntime at build time).
+# `webgpu` enables the cross-vendor WebGPU EP (Dawn→Vulkan/Metal/D3D) so the same
+# build can use Intel/AMD/NVIDIA/ARM GPUs once a WebGPU-capable onnxruntime is
+# bundled. EP features only gate the Rust API under load-dynamic (no build-time SDK
+# needed) — the EP must also be present in the loaded onnxruntime to actually work.
+ort = { version = "=2.0.0-rc.12", default-features = false, features = ["load-dynamic", "webgpu"] }
+# Pure-Rust tokenizer for the CLIP text encoder. default-features = false drops the
+# C/C++ deps (onig, esaxx_fast, progressbar); `fancy-regex` is the pure-Rust regex
+# engine (tokenizers requires either it or the C `onig`). Inference (from_file +
+# encode) only needs this.
+tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }

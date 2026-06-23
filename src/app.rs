@@ -30,9 +30,13 @@ use fotema_core::VisualId;
 use fotema_core::database;
 use fotema_core::path_encoding;
 use fotema_core::people;
+use fotema_core::search;
 use fotema_core::thumbnailify::Thumbnailer;
 
 use h3o::CellIndex;
+
+use ashpd::WindowIdentifier;
+use ashpd::desktop::file_chooser::OpenFileRequest;
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -60,6 +64,7 @@ use self::components::{
         people_album::{PeopleAlbum, PeopleAlbumInput, PeopleAlbumOutput},
         person_album::{PersonAlbum, PersonAlbumInput, PersonAlbumOutput},
         places_album::{PlacesAlbum, PlacesAlbumInput, PlacesAlbumOutput},
+        search_album::{SearchAlbum, SearchAlbumInput, SearchAlbumOutput},
     },
     library::{Library, LibraryInput, LibraryOutput},
     onboard::{Onboard, OnboardOutput},
@@ -86,6 +91,7 @@ pub enum ViewName {
     All,
     Month,
     Year,
+    Search,
     Videos,
     Animated,
     Folders,
@@ -109,6 +115,7 @@ impl FromStr for ViewName {
             "All" => ::core::result::Result::Ok(ViewName::All),
             "Month" => ::core::result::Result::Ok(ViewName::Month),
             "Year" => ::core::result::Result::Ok(ViewName::Year),
+            "Search" => ::core::result::Result::Ok(ViewName::Search),
             "Videos" => ::core::result::Result::Ok(ViewName::Videos),
             "Animated" => ::core::result::Result::Ok(ViewName::Animated),
             "Folders" => ::core::result::Result::Ok(ViewName::Folders),
@@ -214,6 +221,7 @@ pub(super) struct App {
     show_selfies: bool,
     selfies_page: Controller<Album>,
     videos_page: Controller<Album>,
+    search_page: Controller<SearchAlbum>,
     motion_page: Controller<Album>,
 
     /// Album with photos overlayed onto a map
@@ -262,6 +270,35 @@ pub(super) struct App {
     toast_overlay: adw::ToastOverlay,
 
     settings_state: SettingsState,
+
+    /// Shared list of all visuals, used to resolve picture ids to source files
+    /// when exporting a group (search results / a person's photos).
+    state: SharedState,
+}
+
+/// Pick a destination path that doesn't clobber an existing file: on collision,
+/// insert `_1`, `_2`, … before the extension.
+fn unique_dest(path: PathBuf) -> PathBuf {
+    if !path.exists() {
+        return path;
+    }
+    let parent = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = path.extension().map(|e| e.to_string_lossy().into_owned());
+    for i in 1..100_000 {
+        let name = match &ext {
+            Some(e) => format!("{stem}_{i}.{e}"),
+            None => format!("{stem}_{i}"),
+        };
+        let candidate = parent.join(name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    path
 }
 
 #[derive(Debug)]
@@ -272,6 +309,10 @@ pub(super) enum AppMsg {
 
     /// Ignore event
     Ignore,
+
+    /// Export a group of photos (search results or a person's photos): pick a
+    /// destination folder and copy the source files there.
+    ExportPictures(Vec<PictureId>),
 
     // Toggle visibility of sidebar
     ToggleSidebar,
@@ -504,6 +545,16 @@ impl SimpleAsyncComponent for App {
 
                                         add_child = &gtk::Box {
                                             set_orientation: gtk::Orientation::Vertical,
+                                            container_add: model.search_page.widget(),
+                                        } -> {
+                                            set_title: &fl!("search-page"),
+                                            set_name: ViewName::Search.as_ref(),
+                                            // NOTE gtk::StackSidebar doesn't show icon :-/
+                                            set_icon_name: "system-search-symbolic",
+                                        },
+
+                                        add_child = &gtk::Box {
+                                            set_orientation: gtk::Orientation::Vertical,
                                             container_add: model.videos_page.widget(),
                                         } -> {
                                             set_title: &fl!("videos-album"),
@@ -652,6 +703,8 @@ impl SimpleAsyncComponent for App {
 
         let people_repo = people::Repository::open(&cache_dir, &data_dir, con.clone()).unwrap();
 
+        let search_repo = search::Repository::open(con.clone()).unwrap();
+
         let state = SharedState::new(relm4::SharedState::new());
         let active_view = ActiveView::new(relm4::SharedState::new());
         let adaptive_layout = Arc::new(adaptive::LayoutState::new());
@@ -790,6 +843,20 @@ impl SimpleAsyncComponent for App {
             AlbumInput::Sort(settings.album_sort)
         });
 
+        let search_page = SearchAlbum::builder()
+            .launch((
+                state.clone(),
+                active_view.clone(),
+                thumbnailer.clone(),
+                cache_dir.clone(),
+                search_repo.clone(),
+                people_repo.clone(),
+            ))
+            .forward(sender.input_sender(), |msg| match msg {
+                SearchAlbumOutput::Selected(id, filter) => AppMsg::View(id, filter),
+                SearchAlbumOutput::Export(ids) => AppMsg::ExportPictures(ids),
+            });
+
         let people_page = PeopleAlbum::builder()
             .launch((
                 people_repo.clone(),
@@ -829,6 +896,7 @@ impl SimpleAsyncComponent for App {
                 PersonAlbumOutput::Renamed => AppMsg::PersonRenamed,
                 PersonAlbumOutput::FacesChanged => AppMsg::FacesChanged,
                 PersonAlbumOutput::IgnoredChanged => AppMsg::PersonIgnoredChanged,
+                PersonAlbumOutput::Export(ids) => AppMsg::ExportPictures(ids),
             });
 
         state.subscribe(person_album.sender(), |_| PersonAlbumInput::Refresh);
@@ -927,6 +995,7 @@ impl SimpleAsyncComponent for App {
             view_nav,
             motion_page,
             videos_page,
+            search_page,
             people_page,
             faces_page,
             pending_unknown_refresh: false,
@@ -951,6 +1020,8 @@ impl SimpleAsyncComponent for App {
             toast_overlay: toast_overlay.clone(),
 
             settings_state: settings_state.clone(),
+
+            state: state.clone(),
         };
 
         let widgets = view_output!();
@@ -1042,6 +1113,81 @@ impl SimpleAsyncComponent for App {
             AppMsg::Ignore => {
                 // info!("Intentionally ignoring a message");
             }
+            AppMsg::ExportPictures(picture_ids) => {
+                if picture_ids.is_empty() {
+                    return;
+                }
+                // Ask the user for a destination folder (XDG portal).
+                let Some(root) = self.toast_overlay.root() else {
+                    return;
+                };
+                let identifier = WindowIdentifier::from_native(&root).await;
+                let request = OpenFileRequest::default()
+                    .directory(true)
+                    .identifier(identifier)
+                    .modal(true)
+                    .multiple(false);
+                let dest: Option<PathBuf> =
+                    match request.send().await.and_then(|r| r.response()) {
+                        std::result::Result::Ok(files) => files.uris().first().and_then(|uri| {
+                            glib::Uri::parse(uri.as_str(), glib::UriFlags::NONE)
+                                .map(|u| PathBuf::from(u.path()))
+                                .ok()
+                        }),
+                        Err(e) => {
+                            error!("Export folder chooser failed: {e}");
+                            None
+                        }
+                    };
+                let Some(dest) = dest else {
+                    return;
+                };
+
+                // Resolve picture ids to (source file, destination file) via the
+                // shared visual list.
+                let jobs: Vec<(PathBuf, PathBuf)> = {
+                    let data = self.state.read();
+                    picture_ids
+                        .iter()
+                        .filter_map(|pid| {
+                            data.iter().find(|v| v.picture_id == Some(*pid)).map(|v| {
+                                let src = v.sandbox_path().clone();
+                                let name = v
+                                    .host_path()
+                                    .file_name()
+                                    .or_else(|| src.file_name())
+                                    .map(|n| n.to_owned())
+                                    .unwrap_or_default();
+                                (src, dest.join(name))
+                            })
+                        })
+                        .collect()
+                };
+
+                let total = jobs.len();
+                info!("Exporting {} photos to {:?}", total, dest);
+                // Copy off the main loop so the UI stays responsive for big groups.
+                let exported = relm4::spawn_blocking(move || {
+                    let mut count = 0usize;
+                    for (src, dst) in jobs {
+                        let dst = unique_dest(dst);
+                        match std::fs::copy(&src, &dst) {
+                            std::result::Result::Ok(_) => count += 1,
+                            Err(e) => warn!("Export copy {:?} -> {:?} failed: {e}", src, dst),
+                        }
+                    }
+                    count
+                })
+                .await
+                .unwrap_or(0);
+
+                let toast = adw::Toast::new(&fl!(
+                    "export-done",
+                    exported = exported.to_string(),
+                    total = total.to_string()
+                ));
+                self.toast_overlay.add_toast(toast);
+            }
             AppMsg::SettingsChanged(settings) => {
                 if let Err(e) = App::save_settings(&settings) {
                     error!("Failed to save settings: {}", e);
@@ -1092,6 +1238,7 @@ impl SimpleAsyncComponent for App {
                         self.library.emit(LibraryInput::Activate);
                     }
                     ViewName::Videos => self.videos_page.emit(AlbumInput::Activate),
+                    ViewName::Search => self.search_page.emit(SearchAlbumInput::Activate),
                     ViewName::Selfies => self.selfies_page.emit(AlbumInput::Activate),
                     ViewName::Animated => self.motion_page.emit(AlbumInput::Activate),
                     ViewName::Folders => self.folders_album.emit(FoldersAlbumInput::Activate),
@@ -1211,6 +1358,9 @@ impl SimpleAsyncComponent for App {
                     }
                     TaskName::RecognizeFaces => {
                         self.banner.set_title(&fl!("banner-recognize-faces-photos"));
+                    }
+                    TaskName::ClipEmbed => {
+                        self.banner.set_title(&fl!("banner-clip-embed-photos"));
                     }
                     TaskName::Clean(MediaType::Photo) => {
                         self.banner.set_title(&fl!("banner-clean-photos"));

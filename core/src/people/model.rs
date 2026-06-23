@@ -22,6 +22,55 @@ impl FaceDetectionCandidate {
     }
 }
 
+/// Confidence tier of an auto-recognised (unconfirmed) face, derived from the
+/// cosine similarity to its best matching reference. Used to group suggestions
+/// for review. The thresholds are deliberately simple and tunable here.
+///
+/// Note: cosine similarity is NOT a calibrated probability — these are relative
+/// confidence bands, not "% correct".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ConfidenceTier {
+    /// Weakest still-shown match — only captured for explicit review.
+    Weak,
+    /// Plausible match.
+    Possible,
+    /// Likely match.
+    Likely,
+    /// Strong match.
+    VeryConfident,
+}
+
+impl ConfidenceTier {
+    /// Lowest similarity that is still captured/assigned at all. Below this a
+    /// face stays "unknown".
+    pub const MIN_SCORE: f32 = 0.35;
+
+    /// Map a cosine similarity to a tier, or `None` if below [`Self::MIN_SCORE`].
+    pub fn from_score(score: f32) -> Option<Self> {
+        if score >= 0.60 {
+            Some(Self::VeryConfident)
+        } else if score >= 0.50 {
+            Some(Self::Likely)
+        } else if score >= 0.42 {
+            Some(Self::Possible)
+        } else if score >= Self::MIN_SCORE {
+            Some(Self::Weak)
+        } else {
+            None
+        }
+    }
+
+    /// All tiers, strongest first (display order).
+    pub fn all_strongest_first() -> [ConfidenceTier; 4] {
+        [
+            Self::VeryConfident,
+            Self::Likely,
+            Self::Possible,
+            Self::Weak,
+        ]
+    }
+}
+
 /// Database ID
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FaceId(i64);

@@ -14,6 +14,7 @@ use fotema_core::database;
 use fotema_core::people;
 use fotema_core::people::migrate::Migrate;
 use fotema_core::photo;
+use fotema_core::search;
 use fotema_core::thumbnailify::Thumbnailer;
 use fotema_core::video;
 use fotema_core::visual;
@@ -37,6 +38,9 @@ use super::{
         PersonThumbnailTask, PersonThumbnailTaskInput, PersonThumbnailTaskOutput,
     },
     photo_clean_task::{PhotoCleanTask, PhotoCleanTaskInput, PhotoCleanTaskOutput},
+    photo_clip_embed_task::{
+        PhotoClipEmbedTask, PhotoClipEmbedTaskInput, PhotoClipEmbedTaskOutput,
+    },
     photo_detect_faces_task::{
         PhotoDetectFacesTask, PhotoDetectFacesTaskInput, PhotoDetectFacesTaskOutput,
     },
@@ -87,6 +91,7 @@ pub enum TaskName {
     Clean(MediaType),
     DetectFaces,
     RecognizeFaces,
+    ClipEmbed,
     Transcode,
     Tidy,
     Migrate,
@@ -182,6 +187,7 @@ pub struct Controllers {
 
     photo_detect_faces_task: Arc<WorkerController<PhotoDetectFacesTask>>,
     photo_recognize_faces_task: Arc<WorkerController<PhotoRecognizeFacesTask>>,
+    photo_clip_embed_task: Arc<WorkerController<PhotoClipEmbedTask>>,
 
     video_transcode_task: Arc<WorkerController<VideoTranscodeTask>>,
 
@@ -398,6 +404,15 @@ impl Controllers {
         };
     }
 
+    fn add_task_photo_clip_embed(&mut self) {
+        // Independent of face detection: smart-search embeddings are computed for
+        // the whole library regardless of the face-detection setting.
+        let sender = self.photo_clip_embed_task.sender().clone();
+        self.enqueue(Box::new(move || {
+            sender.emit(PhotoClipEmbedTaskInput::Start)
+        }));
+    }
+
     fn add_task_photo_recognize_faces_now(&mut self) {
         // User-initiated (triggered by naming a face), so it runs regardless of
         // the face-detection setting; it is cheap — pure stored-embedding cosine
@@ -537,6 +552,8 @@ impl Bootstrap {
 
         let people_repo = people::Repository::open(&cache_dir, &data_dir, self.con.clone())?;
 
+        let search_repo = search::Repository::open(self.con.clone())?;
+
         let stop = Arc::new(AtomicBool::new(false));
 
         let load_library_task = LoadLibraryTask::builder()
@@ -548,7 +565,12 @@ impl Bootstrap {
             });
 
         let library_scan_task = LibraryScanTask::builder()
-            .detach_worker((scanner, photo_repo.clone(), video_repo.clone()))
+            .detach_worker((
+                scanner,
+                photo_repo.clone(),
+                video_repo.clone(),
+                self.progress_monitor.clone(),
+            ))
             .forward(sender.input_sender(), |msg| match msg {
                 LibraryScanTaskOutput::Started => BootstrapInput::TaskStarted(TaskName::Scan),
                 LibraryScanTaskOutput::Completed => {
@@ -557,7 +579,11 @@ impl Bootstrap {
             });
 
         let photo_enrich_task = PhotoEnrichTask::builder()
-            .detach_worker((stop.clone(), photo_repo.clone()))
+            .detach_worker((
+                stop.clone(),
+                photo_repo.clone(),
+                self.progress_monitor.clone(),
+            ))
             .forward(sender.input_sender(), |msg| match msg {
                 PhotoEnrichTaskOutput::Started => {
                     BootstrapInput::TaskStarted(TaskName::Enrich(MediaType::Photo))
@@ -710,6 +736,22 @@ impl Bootstrap {
                 }
             });
 
+        let photo_clip_embed_task = PhotoClipEmbedTask::builder()
+            .detach_worker((
+                stop.clone(),
+                cache_dir.clone(),
+                thumbnailer.clone(),
+                photo_repo.clone(),
+                search_repo.clone(),
+                self.progress_monitor.clone(),
+            ))
+            .forward(sender.input_sender(), |msg| match msg {
+                PhotoClipEmbedTaskOutput::Started => BootstrapInput::TaskStarted(TaskName::ClipEmbed),
+                PhotoClipEmbedTaskOutput::Completed => {
+                    BootstrapInput::TaskCompleted(TaskName::ClipEmbed, None)
+                }
+            });
+
         let tidy_task =
             TidyTask::builder()
                 .detach_worker(stop.clone())
@@ -767,6 +809,7 @@ impl Bootstrap {
             video_thumbnail_task: Arc::new(video_thumbnail_task),
             photo_detect_faces_task: Arc::new(photo_detect_faces_task),
             photo_recognize_faces_task: Arc::new(photo_recognize_faces_task),
+            photo_clip_embed_task: Arc::new(photo_clip_embed_task),
             video_transcode_task: Arc::new(video_transcode_task),
             tidy_task: Arc::new(tidy_task),
             migrate_task: Arc::new(migrate_task),
@@ -799,6 +842,7 @@ impl Bootstrap {
         controllers.add_task_photo_extract_motion();
         controllers.add_task_photo_detect_faces();
         controllers.add_task_photo_recognize_faces();
+        controllers.add_task_photo_clip_embed();
 
         controllers.add_task_tidy();
 

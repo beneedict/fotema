@@ -6,9 +6,13 @@ use fotema_core::photo::Repository as PhotoRepository;
 use fotema_core::video::Repository as VideoRepository;
 use fotema_core::{ScannedFile, Scanner};
 use itertools::{Either, Itertools};
+use relm4::Reducer;
 use relm4::Worker;
 use relm4::prelude::*;
+use std::sync::Arc;
 use tracing::{error, info};
+
+use crate::app::components::progress_monitor::{ProgressMonitor, ProgressMonitorInput, TaskName};
 
 #[derive(Debug)]
 pub enum LibraryScanTaskInput {
@@ -25,18 +29,28 @@ pub struct LibraryScanTask {
     scan: Scanner,
     photo_repo: PhotoRepository,
     video_repo: VideoRepository,
+    progress_monitor: Arc<Reducer<ProgressMonitor>>,
 }
 
 impl Worker for LibraryScanTask {
-    type Init = (Scanner, PhotoRepository, VideoRepository);
+    type Init = (
+        Scanner,
+        PhotoRepository,
+        VideoRepository,
+        Arc<Reducer<ProgressMonitor>>,
+    );
     type Input = LibraryScanTaskInput;
     type Output = LibraryScanTaskOutput;
 
-    fn init((scan, photo_repo, video_repo): Self::Init, _sender: ComponentSender<Self>) -> Self {
+    fn init(
+        (scan, photo_repo, video_repo, progress_monitor): Self::Init,
+        _sender: ComponentSender<Self>,
+    ) -> Self {
         Self {
             scan,
             photo_repo,
             video_repo,
+            progress_monitor,
         }
     }
 
@@ -62,6 +76,11 @@ impl LibraryScanTask {
 
         info!("Scanning file system for pictures...");
 
+        // The scan discovers files as it walks, so the total is unknown up front:
+        // show a pulsing bar for the duration.
+        self.progress_monitor
+            .emit(ProgressMonitorInput::StartPulse(TaskName::Scan));
+
         let result = self.scan.scan_all().map_err(|e| e.to_string())?;
 
         let (photos, videos) =
@@ -85,6 +104,9 @@ impl LibraryScanTask {
             videos.len(),
             start.elapsed().as_secs()
         );
+
+        self.progress_monitor
+            .emit(ProgressMonitorInput::Complete);
 
         sender
             .output(LibraryScanTaskOutput::Completed)

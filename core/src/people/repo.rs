@@ -447,6 +447,33 @@ impl Repository {
         Ok(id.map(PersonId::new))
     }
 
+    /// Find people whose name contains `query` (case-insensitive substring). Used
+    /// by smart search to fold a person's photos into the results when the query
+    /// looks like a name. Empty/whitespace queries match nothing.
+    pub fn find_people_by_name_like(&self, query: &str) -> Result<Vec<PersonId>> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Escape LIKE wildcards in the user's text so they are matched literally.
+        let escaped = query
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pattern = format!("%{escaped}%");
+        let con = self.con.lock().unwrap();
+        let mut stmt = con.prepare_cached(
+            "SELECT person_id FROM people
+             WHERE name LIKE ?1 ESCAPE '\\' COLLATE NOCASE",
+        )?;
+        let ids = stmt
+            .query_map(params![pattern], |row| row.get::<_, i64>(0))?
+            .flatten()
+            .map(PersonId::new)
+            .collect();
+        Ok(ids)
+    }
+
     /// Order known people by how similar their faces' SFace embeddings are to
     /// the given face's embedding (closest first), so the most likely match is
     /// suggested at the top of the naming list. People with no comparable
@@ -808,6 +835,38 @@ impl Repository {
         Ok(result)
     }
 
+    /// Like [`Self::find_unconfirmed_pictures_for_person`], but also returns the
+    /// recognition score per picture so callers can bucket suggestions into
+    /// confidence tiers. A picture's score is the strongest unconfirmed face of
+    /// this person in it. Faces assigned before scores were stored (NULL) fall
+    /// back to 0.42 (the old precision-leaning threshold → "Possible" tier).
+    pub fn find_unconfirmed_scored_for_person(
+        &self,
+        person_id: PersonId,
+    ) -> Result<Vec<(PictureId, f32)>> {
+        let con = self.con.lock().unwrap();
+        let mut stmt = con.prepare(
+            "SELECT
+                picture_id,
+                MAX(COALESCE(recognition_score, 0.42)) AS score
+            FROM  pictures_faces
+            WHERE person_id == ?1 AND is_confirmed = FALSE
+            GROUP BY picture_id",
+        )?;
+
+        let result: Vec<(PictureId, f32)> = stmt
+            .query_map([person_id.id()], |row| {
+                Ok((
+                    PictureId::new(row.get("picture_id")?),
+                    row.get::<_, f64>("score")? as f32,
+                ))
+            })?
+            .flatten()
+            .collect();
+
+        Ok(result)
+    }
+
     // FIXME probably need a mechanism to undo this in the likely event of user error.
     pub fn mark_ignore(&mut self, face_id: FaceId) -> Result<()> {
         let mut con = self.con.lock().unwrap();
@@ -1081,11 +1140,14 @@ impl Repository {
         Ok(())
     }
 
-    /// Face recognition is automatically marking a face as a person
+    /// Face recognition is automatically marking a face as a person. `score` is
+    /// the cosine similarity to the best matching reference (None for sources
+    /// without one, e.g. imported XMP names) and feeds the confidence tiers.
     pub fn mark_as_person_unconfirmed(
         &mut self,
         face_id: FaceId,
         person_id: PersonId,
+        score: Option<f32>,
     ) -> Result<()> {
         let mut con = self.con.lock().unwrap();
         let tx = con.transaction()?;
@@ -1096,11 +1158,12 @@ impl Repository {
                 SET
                     person_id = ?2,
                     is_confirmed = FALSE,
-                    is_thumbnail = FALSE
+                    is_thumbnail = FALSE,
+                    recognition_score = ?3
                 WHERE face_id = ?1",
             )?;
 
-            stmt.execute(params![face_id.id(), person_id.id(),])?;
+            stmt.execute(params![face_id.id(), person_id.id(), score])?;
         }
 
         tx.commit()?;

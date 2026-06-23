@@ -10,4 +10,5 @@ pub mod months_album;
 pub mod people_album;
 pub mod person_album;
 pub mod places_album;
+pub mod search_album;
 pub mod years_album;

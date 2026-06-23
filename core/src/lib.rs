@@ -10,6 +10,7 @@ pub mod path_encoding;
 pub mod people;
 pub mod photo;
 pub mod scanner;
+pub mod search;
 pub mod thumbnailify;
 pub mod time;
 pub mod video;

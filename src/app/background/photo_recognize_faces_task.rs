@@ -119,7 +119,8 @@ impl PhotoRecognizeFacesTask {
                     {
                         continue;
                     }
-                    people_repo.mark_as_person_unconfirmed(face.face_id, person_id)
+                    // Imported name, no similarity score.
+                    people_repo.mark_as_person_unconfirmed(face.face_id, person_id, None)
                 }
                 Ok(None) => people_repo.add_person_unconfirmed(face.face_id, name),
                 Err(e) => {
@@ -332,15 +333,19 @@ impl PhotoRecognizeFacesTask {
         // mistakes don't come back (negative learning).
         let negatives = self.repo.find_negative_associations().unwrap_or_default();
 
-        // Precision-leaning cosine threshold (mirrors the auto-recognition default).
-        const THRESHOLD: f32 = 0.42;
+        // Lowest similarity we still capture. Matches between this and the old
+        // 0.42 default become low-confidence ("weak") suggestions the user
+        // reviews; the tiering itself happens at display time via ConfidenceTier.
+        const THRESHOLD: f32 = people::ConfidenceTier::MIN_SCORE;
 
-        let assignments: Vec<(FaceId, PersonId)> = unnamed
+        let assignments: Vec<(FaceId, PersonId, f32)> = unnamed
             .par_iter()
             .take_any_while(|_| !self.stop.load(Ordering::Relaxed))
             .filter_map(|face| {
                 let rejected = negatives.get(&face.face_id.id());
                 let mut best_person: Option<PersonId> = None;
+                // best_cos rises in lockstep with best_person, so on exit it is
+                // the similarity of the chosen person.
                 let mut best_cos = THRESHOLD;
                 for reference in &references {
                     // Per-person timing: a face is only matched to people whose
@@ -358,16 +363,16 @@ impl PhotoRecognizeFacesTask {
                         best_person = Some(reference.person_id);
                     }
                 }
-                best_person.map(|person_id| (face.face_id, person_id))
+                best_person.map(|person_id| (face.face_id, person_id, best_cos))
             })
             .collect();
 
         let count = assignments.len();
         let mut repo = self.repo.clone();
-        for (face_id, person_id) in assignments {
-            info!("Face {} looks like person {}", face_id, person_id);
+        for (face_id, person_id, score) in assignments {
+            info!("Face {} looks like person {} (score {:.3})", face_id, person_id, score);
             // Auto-recognised matches are unconfirmed — overridable by the user.
-            if let Err(e) = repo.mark_as_person_unconfirmed(face_id, person_id) {
+            if let Err(e) = repo.mark_as_person_unconfirmed(face_id, person_id, Some(score)) {
                 error!("Failed marking face {} as person: {:?}", face_id, e);
             }
         }

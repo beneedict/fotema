@@ -1,0 +1,42 @@
+{
+    "name": "libonnxruntime",
+    "buildsystem": "simple",
+    "build-options": {
+        "build-args": [
+            "--share=network"
+        ],
+        "env": {
+            "CMAKE_POLICY_VERSION_MINIMUM": "3.5"
+        }
+    },
+    "build-commands": [
+        "bash -euxc 'export PATH=$PWD/node-dist/bin:$PATH; python3 tools/ci_build/build.py --build_dir build/webgpu --config Release --build_shared_lib --use_webgpu --skip_tests --parallel 3 --compile_no_warning_as_error --cmake_extra_defines CMAKE_POLICY_VERSION_MINIMUM=3.5 onnxruntime_BUILD_UNIT_TESTS=OFF'",
+        "install -d /app/lib",
+        "cp -P build/webgpu/Release/libonnxruntime*.so* /app/lib/"
+    ],
+    "sources": [
+        {
+            "type": "git",
+            "url": "https://github.com/microsoft/onnxruntime.git",
+            "commit": "2d924974ef147392ced8409d36bd6d2e7fcc8a74"
+        },
+        {
+            "type": "archive",
+            "only-arches": [
+                "x86_64"
+            ],
+            "url": "https://nodejs.org/dist/v20.18.0/node-v20.18.0-linux-x64.tar.xz",
+            "sha256": "4543670b589593f8fa5f106111fd5139081da42bb165a9239f05195e405f240a",
+            "dest": "node-dist"
+        },
+        {
+            "type": "archive",
+            "only-arches": [
+                "aarch64"
+            ],
+            "url": "https://nodejs.org/dist/v20.18.0/node-v20.18.0-linux-arm64.tar.xz",
+            "sha256": "a9ce85675ba33f00527f6234d90000946c0936fb4fca605f1891bb5f4fe6fb0a",
+            "dest": "node-dist"
+        }
+    ]
+}

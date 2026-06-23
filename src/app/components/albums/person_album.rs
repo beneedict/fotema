@@ -51,6 +51,21 @@ relm4::new_stateless_action!(DeleteAction, PersonActionGroup, "delete");
 // Ignore (hide) or restore a person
 relm4::new_stateless_action!(IgnoreAction, PersonActionGroup, "ignore");
 
+// Export this person's photos to a folder
+relm4::new_stateless_action!(ExportAction, PersonActionGroup, "export");
+
+/// An entry in the review "tier" dropdown: the normal view, all suggestions, or
+/// suggestions of one confidence tier. Parallel to the dropdown's string model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReviewOption {
+    /// Normal album: all confirmed + unconfirmed photos.
+    AllPhotos,
+    /// Review: every unconfirmed suggestion, all tiers.
+    AllSuggestions,
+    /// Review: suggestions of one confidence tier only.
+    Tier(people::ConfidenceTier),
+}
+
 #[derive(Debug)]
 pub enum PersonAlbumInput {
     /// Album is visible
@@ -87,8 +102,9 @@ pub enum PersonAlbumInput {
     /// Confirm unconfirmed (auto-suggested) faces for this person.
     Confirm(Vec<PictureId>),
 
-    /// Toggle "show only suggestions" (unconfirmed faces) review mode.
-    ToggleReview,
+    /// The review "tier" dropdown changed: switch between the normal view, all
+    /// suggestions, or one confidence tier.
+    TierSelected,
 
     /// The reassignment person-picker finished.
     ReassignDone,
@@ -107,6 +123,9 @@ pub enum PersonAlbumInput {
 
     /// Hide this person (or restore them if already hidden).
     ToggleIgnore,
+
+    /// Export this person's photos to a folder.
+    Export,
 
     Sort(AlbumSort),
 }
@@ -127,6 +146,9 @@ pub enum PersonAlbumOutput {
 
     /// This person was hidden or restored; pop back and refresh the overview.
     IgnoredChanged,
+
+    /// Export this person's photos to a folder.
+    Export(Vec<PictureId>),
 }
 
 pub struct PersonAlbum {
@@ -141,8 +163,16 @@ pub struct PersonAlbum {
 
     /// Whether the album currently shows only unconfirmed (auto-suggested) faces.
     reviewing: bool,
-    /// Header toggle "Review suggestions (N)"; hidden when there are none.
-    review_button: gtk::ToggleButton,
+    /// When reviewing, restrict to this single confidence tier (None = all tiers).
+    tier_filter: Option<people::ConfidenceTier>,
+    /// Unconfirmed suggestions for the current person, with their tier. Cached so
+    /// the tier dropdown can re-filter without re-querying.
+    scored_suggestions: Vec<(PictureId, people::ConfidenceTier)>,
+    /// Entries behind `review_dropdown`, parallel to its string model.
+    dropdown_options: Vec<ReviewOption>,
+    /// Header dropdown to pick the review tier; hidden when there are no
+    /// suggestions.
+    review_dropdown: gtk::DropDown,
 
     /// Person picker shown when reassigning a face to a different person.
     person_select: AsyncController<PersonSelect>,
@@ -177,10 +207,10 @@ impl SimpleComponent for PersonAlbum {
                 },
 
                 #[local_ref]
-                pack_start = &review_button -> gtk::ToggleButton {
-                    add_css_class: "suggested-action",
+                pack_start = &review_dropdown -> gtk::DropDown {
                     set_visible: false,
-                    connect_toggled => PersonAlbumInput::ToggleReview,
+                    set_tooltip_text: Some(&fl!("person-review-tooltip")),
+                    connect_selected_notify => PersonAlbumInput::TierSelected,
                 },
             },
 
@@ -244,8 +274,10 @@ impl SimpleComponent for PersonAlbum {
         let make_menu = |toggle_label: &str| {
             let menu = gio::Menu::new();
             let rename = fl!("person-menu-rename");
+            let export = fl!("person-menu-export");
             let delete = fl!("person-menu-delete");
             menu.append(Some(rename.as_str()), Some("person.rename"));
+            menu.append(Some(export.as_str()), Some("person.export"));
             menu.append(Some(toggle_label), Some("person.ignore"));
             menu.append(Some(delete.as_str()), Some("person.delete"));
             menu
@@ -259,7 +291,7 @@ impl SimpleComponent for PersonAlbum {
             .menu_model(&menu_active)
             .build();
 
-        let review_button = gtk::ToggleButton::new();
+        let review_dropdown = gtk::DropDown::builder().build();
 
         let model = PersonAlbum {
             repo,
@@ -271,7 +303,10 @@ impl SimpleComponent for PersonAlbum {
             picture_ids: vec![],
             edge_length: I32Binding::new(NARROW_EDGE_LENGTH),
             reviewing: false,
-            review_button: review_button.clone(),
+            tier_filter: None,
+            scored_suggestions: vec![],
+            dropdown_options: vec![],
+            review_dropdown: review_dropdown.clone(),
             person_select,
             person_dialog,
             menu_button: menu_button.clone(),
@@ -307,9 +342,17 @@ impl SimpleComponent for PersonAlbum {
             })
         };
 
+        let export_action = {
+            let sender = sender.clone();
+            RelmAction::<ExportAction>::new_stateless(move |_| {
+                sender.input(PersonAlbumInput::Export);
+            })
+        };
+
         actions.add_action(rename_action);
         actions.add_action(delete_action);
         actions.add_action(ignore_action);
+        actions.add_action(export_action);
         actions.register_for_widget(&root);
 
         ComponentParts { model, widgets }
@@ -362,8 +405,9 @@ impl SimpleComponent for PersonAlbum {
                 self.person = Some(person);
 
                 // New person: start in the normal (all photos) view; reload_pictures
-                // also refreshes the "review suggestions" toggle/count.
+                // also rebuilds the review tier dropdown + counts.
                 self.reviewing = false;
+                self.tier_filter = None;
                 self.reload_pictures();
             }
             PersonAlbumInput::Selected(visual_id) => {
@@ -485,9 +529,27 @@ impl SimpleComponent for PersonAlbum {
                 self.reload_pictures();
                 let _ = sender.output(PersonAlbumOutput::FacesChanged);
             }
-            PersonAlbumInput::ToggleReview => {
-                self.reviewing = self.review_button.is_active();
-                self.reload_pictures();
+            PersonAlbumInput::TierSelected => {
+                let i = self.review_dropdown.selected() as usize;
+                let Some(opt) = self.dropdown_options.get(i).copied() else {
+                    return;
+                };
+                match opt {
+                    ReviewOption::AllPhotos => {
+                        self.reviewing = false;
+                        self.tier_filter = None;
+                    }
+                    ReviewOption::AllSuggestions => {
+                        self.reviewing = true;
+                        self.tier_filter = None;
+                    }
+                    ReviewOption::Tier(t) => {
+                        self.reviewing = true;
+                        self.tier_filter = Some(t);
+                    }
+                }
+                // Only re-filter; rebuilding the dropdown here would recurse.
+                self.apply_pictures();
             }
             PersonAlbumInput::Confirm(picture_ids) => {
                 let Some(person) = self.person.clone() else {
@@ -659,6 +721,11 @@ impl SimpleComponent for PersonAlbum {
                 // the active list, or the ignored list, accordingly).
                 let _ = sender.output(PersonAlbumOutput::IgnoredChanged);
             }
+            PersonAlbumInput::Export => {
+                if !self.picture_ids.is_empty() {
+                    let _ = sender.output(PersonAlbumOutput::Export(self.picture_ids.clone()));
+                }
+            }
         }
     }
 }
@@ -674,46 +741,131 @@ impl PersonAlbum {
             .find_map(|(face, p)| (p.map(|p| p.person_id) == Some(person_id)).then_some(face))
     }
 
-    /// Re-fetch the current person's pictures and re-filter the album. Honours
-    /// the "review suggestions" mode and refreshes the review toggle (which shows
-    /// the count of unconfirmed/auto-suggested faces and is hidden when none).
+    /// Rebuild the review tier dropdown for the current person, then re-filter
+    /// the album to match the active view/tier. Call after anything that changes
+    /// the suggestion set (new person, confirm/remove, reassign).
     fn reload_pictures(&mut self) {
+        self.refresh_review_control();
+        self.apply_pictures();
+    }
+
+    /// Recompute the unconfirmed suggestions, bucket them into confidence tiers,
+    /// and rebuild the header dropdown (options + counts). Reconciles the active
+    /// review state if a tier (or all suggestions) has gone away.
+    fn refresh_review_control(&mut self) {
         let Some(person) = self.person.clone() else {
             return;
         };
 
-        let suggestions = self
+        self.scored_suggestions = self
             .repo
-            .find_unconfirmed_pictures_for_person(person.person_id)
-            .unwrap_or_default();
-        let n = suggestions.len();
+            .find_unconfirmed_scored_for_person(person.person_id)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(pid, score)| {
+                people::ConfidenceTier::from_score(score).map(|tier| (pid, tier))
+            })
+            .collect();
+        let n = self.scored_suggestions.len();
 
-        // Nothing left to review → leave review mode.
+        // Reconcile: a tier filter whose tier no longer has suggestions falls
+        // back to "all suggestions"; no suggestions at all leaves review mode.
+        if let Some(tf) = self.tier_filter {
+            if !self.scored_suggestions.iter().any(|(_, t)| *t == tf) {
+                self.tier_filter = None;
+            }
+        }
         if n == 0 {
             self.reviewing = false;
-        }
-        self.review_button.set_visible(n > 0);
-        self.review_button
-            .set_label(&fl!("person-review-suggestions", count = n.to_string()));
-        if self.review_button.is_active() != self.reviewing {
-            self.review_button.set_active(self.reviewing);
+            self.tier_filter = None;
         }
 
-        self.picture_ids = if self.reviewing {
-            suggestions
+        let mut options = vec![ReviewOption::AllPhotos];
+        let mut labels: Vec<String> = vec![fl!("person-review-all-photos")];
+        if n > 0 {
+            options.push(ReviewOption::AllSuggestions);
+            labels.push(fl!("person-review-all-suggestions", count = n.to_string()));
+            for tier in people::ConfidenceTier::all_strongest_first() {
+                let count = self
+                    .scored_suggestions
+                    .iter()
+                    .filter(|(_, t)| *t == tier)
+                    .count();
+                if count > 0 {
+                    options.push(ReviewOption::Tier(tier));
+                    labels.push(Self::tier_label(tier, count));
+                }
+            }
+        }
+        self.dropdown_options = options;
+
+        // Selection matching the current state (defaults to "all photos").
+        let selected = if !self.reviewing {
+            0
         } else {
+            self.dropdown_options
+                .iter()
+                .position(|o| match o {
+                    ReviewOption::Tier(t) => Some(*t) == self.tier_filter,
+                    ReviewOption::AllSuggestions => self.tier_filter.is_none(),
+                    ReviewOption::AllPhotos => false,
+                })
+                .unwrap_or(0)
+        };
+
+        let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let string_model = gtk::StringList::new(&label_refs);
+        self.review_dropdown.set_model(Some(&string_model));
+        self.review_dropdown.set_selected(selected as u32);
+        self.review_dropdown.set_visible(n > 0);
+    }
+
+    /// Filter the album to the active view: all photos, or the suggestions of
+    /// the active tier (or all tiers). Skips the album work when unchanged so a
+    /// dropdown rebuild that re-emits the same selection doesn't cause a flicker.
+    fn apply_pictures(&mut self) {
+        let Some(person) = self.person.clone() else {
+            return;
+        };
+
+        let new_ids: Vec<PictureId> = if !self.reviewing {
             self.repo
                 .find_pictures_for_person(person.person_id)
                 .unwrap_or_default()
+        } else {
+            self.scored_suggestions
+                .iter()
+                .filter(|(_, t)| self.tier_filter.map_or(true, |tf| *t == tf))
+                .map(|(pid, _)| *pid)
+                .collect()
         };
+
         // In review mode a single click selects (for bulk confirm/remove);
-        // otherwise it opens the photo.
+        // otherwise it opens the photo. Always keep this in sync (cheap).
         self.album
             .sender()
             .emit(AlbumInput::SetSelectMode(self.reviewing));
+
+        if new_ids == self.picture_ids {
+            return;
+        }
+        self.picture_ids = new_ids;
         self.album.sender().emit(AlbumInput::Filter(AlbumFilter::Any(
             self.picture_ids.clone(),
         )));
         self.album.sender().emit(AlbumInput::ScrollToTop);
+    }
+
+    /// Dropdown label for a confidence tier, e.g. "Möglich (12)".
+    fn tier_label(tier: people::ConfidenceTier, count: usize) -> String {
+        let count = count.to_string();
+        match tier {
+            people::ConfidenceTier::VeryConfident => {
+                fl!("confidence-very-confident", count = count)
+            }
+            people::ConfidenceTier::Likely => fl!("confidence-likely", count = count),
+            people::ConfidenceTier::Possible => fl!("confidence-possible", count = count),
+            people::ConfidenceTier::Weak => fl!("confidence-weak", count = count),
+        }
     }
 }

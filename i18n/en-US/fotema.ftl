@@ -36,6 +36,18 @@ folder-album = Folder
 # Title for places page which shows photos overlayed onto a map.
 places-page = Places
 
+# Title for the smart-search page (free-text photo search).
+search-page = Search
+
+# Placeholder text shown in the smart-search entry.
+search-placeholder = Search photos and people…
+
+# Tooltip for the export button (export the current group of photos).
+export-tooltip = Export to folder…
+
+# Toast shown after exporting a group of photos.
+export-done = Exported {$exported} of {$total} photos.
+
 # Title for people page which shows an album of faces.
 people-page = People
 
@@ -270,6 +282,22 @@ people-confirm-person = Confirm { $name }
 # faces, with the count. Variables: $count - number of suggestions.
 person-review-suggestions = Review suggestions ({ $count })
 
+# Tooltip for the header dropdown that filters a person's photos by review tier.
+person-review-tooltip = Review auto-suggested faces by confidence
+
+# Dropdown entry: leave review mode, show all of the person's photos.
+person-review-all-photos = All photos
+
+# Dropdown entry: review every auto-suggestion. Variables: $count - number.
+person-review-all-suggestions = All suggestions ({ $count })
+
+# Confidence tiers for auto-suggested faces (cosine-similarity bands, not a
+# calibrated probability). Variables: $count - number of suggestions in the tier.
+confidence-very-confident = Very confident ({ $count })
+confidence-likely = Likely ({ $count })
+confidence-possible = Possible ({ $count })
+confidence-weak = Weak match ({ $count })
+
 # Dialog body when acting on several selected photos at once.
 person-photos-selected = { $count } photos selected
 
@@ -325,6 +353,7 @@ prefs-library-section-pictures-dir =
 ## Progress bar for background tasks
 
 # Extracting details from photo EXIF data
+progress-scan-photos = Scanning for new photos and videos.
 progress-metadata-photos = Processing photo metadata.
 
 # Extracting details from video container metadata
@@ -350,6 +379,9 @@ progress-detect-faces-photos = Detecting faces in photos.
 
 # Recognize faces in photos as known people
 progress-recognize-faces-photos = Recognizing people in photos.
+
+# Compute CLIP embeddings so photos can be found by smart search
+progress-clip-embed-photos = Indexing photos for search.
 
 # Not doing any background work
 progress-idle = Idle.
@@ -387,6 +419,9 @@ banner-detect-faces-photos = Detecting faces in photos. This will take a while.
 
 # Recognize faces as people
 banner-recognize-faces-photos = Recognizing people in photos. This will take a while.
+
+# Index photos for smart search
+banner-clip-embed-photos = Indexing photos for search. This will take a while.
 
 # Transcoding videos to a compatible format
 banner-convert-videos = Converting videos.
@@ -427,6 +462,7 @@ update-not-available = { -app-name } is up to date
 ## Person menu
 
 # Menu item to rename a person
+person-menu-export = Export photos…
 person-menu-rename = Rename person
 
 # Menu item to delete a person

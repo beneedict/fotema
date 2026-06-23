@@ -728,6 +728,36 @@ impl Repository {
         Ok(result)
     }
 
+    /// Pictures that still need a CLIP embedding for `model_name` (none stored, or
+    /// only one for a different/older model). Reuses [`FaceDetectionCandidate`] for
+    /// the (picture_id, path) pair — `thumbnail_hash()` locates the cached
+    /// thumbnail that the CLIP image encoder reads. Additive: pictures already
+    /// embedded for the current model are skipped, so re-runs are cheap.
+    pub fn find_clip_embedding_candidates(
+        &self,
+        model_name: &str,
+    ) -> Result<Vec<FaceDetectionCandidate>> {
+        let con = self.con.lock().unwrap();
+        let mut stmt = con.prepare(
+            "SELECT
+                    pictures.picture_id,
+                    pictures.picture_path_b64
+                FROM pictures
+                LEFT OUTER JOIN pictures_clip_embeddings
+                    ON pictures_clip_embeddings.picture_id = pictures.picture_id
+                    AND pictures_clip_embeddings.model_name = ?1
+                WHERE pictures_clip_embeddings.picture_id IS NULL
+                AND COALESCE(pictures.is_broken, FALSE) IS FALSE",
+        )?;
+
+        let result = stmt
+            .query_map([model_name], |row| self.to_face_detection_candidate(row))?
+            .flatten()
+            .collect();
+
+        Ok(result)
+    }
+
     /// FIXME move to people repo
     fn to_face_detection_candidate(
         &self,

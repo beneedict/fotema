@@ -188,19 +188,53 @@ fn new_aligner(model_path: &Path) -> Result<opencv::core::Ptr<FaceRecognizerSF>>
     )?)
 }
 
-/// Load the ArcFace ONNX into an OpenCV DNN net, preferring OpenCL.
+/// Load the ArcFace ONNX into an OpenCV DNN net, preferring OpenCL but only if a
+/// warmup inference actually succeeds. A vendor-neutral OpenCL stack like Mesa
+/// Rusticl can report a device yet fail on some DNN op only at inference time, so
+/// validating up front lets us fall back to CPU cleanly instead of failing every
+/// face embedding.
 fn new_arcface_net(model_path: &Path) -> Result<opencv::dnn::Net> {
-    let mut net = opencv::dnn::read_net_from_onnx(&model_path.to_string_lossy())?;
-    net.set_preferable_backend(opencv::dnn::DNN_BACKEND_OPENCV)?;
-    let target = if opencv::core::have_opencl().unwrap_or(false) {
-        info!("ArcFace recognizer using OpenCL (GPU) acceleration.");
-        opencv::dnn::DNN_TARGET_OPENCL
-    } else {
-        info!("ArcFace recognizer using CPU.");
-        opencv::dnn::DNN_TARGET_CPU
+    let read = |target: i32| -> Result<opencv::dnn::Net> {
+        let mut net = opencv::dnn::read_net_from_onnx(&model_path.to_string_lossy())?;
+        net.set_preferable_backend(opencv::dnn::DNN_BACKEND_OPENCV)?;
+        net.set_preferable_target(target)?;
+        Ok(net)
     };
-    net.set_preferable_target(target)?;
+
+    if opencv::core::have_opencl().unwrap_or(false) {
+        match read(opencv::dnn::DNN_TARGET_OPENCL) {
+            Ok(mut net) => match arcface_warmup(&mut net) {
+                Ok(()) => {
+                    info!("ArcFace recognizer using OpenCL (GPU) acceleration.");
+                    return Ok(net);
+                }
+                Err(e) => warn!("ArcFace OpenCL warmup failed ({e}); using CPU."),
+            },
+            Err(e) => warn!("ArcFace OpenCL init failed ({e}); using CPU."),
+        }
+    }
+
+    let net = read(opencv::dnn::DNN_TARGET_CPU)?;
+    info!("ArcFace recognizer using CPU.");
     Ok(net)
+}
+
+/// Run a single forward on a zeroed 112x112 input to force OpenCL kernel
+/// compilation and surface any unsupported-op errors before real use.
+fn arcface_warmup(net: &mut opencv::dnn::Net) -> Result<()> {
+    let dummy = Mat::zeros(112, 112, opencv::core::CV_8UC3)?.to_mat()?;
+    let blob = opencv::dnn::blob_from_image(
+        &dummy,
+        1.0 / 127.5,
+        opencv::core::Size::new(112, 112),
+        opencv::core::Scalar::new(127.5, 127.5, 127.5, 0.0),
+        true,
+        false,
+        opencv::core::CV_32F,
+    )?;
+    net.set_input(&blob, "", 1.0, opencv::core::Scalar::default())?;
+    let _ = net.forward_single_def()?;
+    Ok(())
 }
 
 /// L2-normalise a vector in place.

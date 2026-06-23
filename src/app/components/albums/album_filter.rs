@@ -40,6 +40,11 @@ pub enum AlbumFilter {
     /// Show photos who's picture_id is in a set. Used for person filtering.
     /// FIXME should probably be a Set of some kind... but that mucks up PartialEq and Eq.
     Any(Vec<PictureId>),
+
+    /// Smart-search results: picture ids in relevance order (best first). Unlike
+    /// `Any`, the album preserves this order instead of sorting by date (see
+    /// `Album::refresh`). Carrying only ids (not scores) keeps `AlbumFilter: Eq`.
+    SearchResults(Vec<PictureId>),
 }
 
 impl AlbumFilter {
@@ -61,6 +66,9 @@ impl AlbumFilter {
                 }
             }
             AlbumFilter::Any(picture_ids) => {
+                v.picture_id.is_some_and(|id| picture_ids.contains(&id))
+            }
+            AlbumFilter::SearchResults(picture_ids) => {
                 v.picture_id.is_some_and(|id| picture_ids.contains(&id))
             }
         }
