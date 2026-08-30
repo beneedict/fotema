@@ -57,7 +57,7 @@ impl FaceEmbedder {
 
     /// Compute the L2-normalised ArcFace embedding for a detected face.
     pub fn embedding(&mut self, face: &DetectedFace) -> Result<Vec<f32>> {
-        let face_img = imgcodecs::imread_def(&face.face_path.to_string_lossy())?;
+        let face_img = imgcodecs::imread_def(&face.face_path)?;
         if face_img.empty() {
             return Err(anyhow!(
                 "Face crop unreadable (empty image): {:?}",
@@ -195,7 +195,10 @@ fn new_aligner(model_path: &Path) -> Result<opencv::core::Ptr<FaceRecognizerSF>>
 /// face embedding.
 fn new_arcface_net(model_path: &Path) -> Result<opencv::dnn::Net> {
     let read = |target: i32| -> Result<opencv::dnn::Net> {
-        let mut net = opencv::dnn::read_net_from_onnx(&model_path.to_string_lossy())?;
+        // In opencv-rust 0.100 the function read_net_from_onnx has a new
+        // parameter `engine`. The _def variant keeps ENGINE_AUTO. The function
+        // accepts impl AsRef<OsStr>. Thus you can give it the path directly.
+        let mut net = opencv::dnn::read_net_from_onnx_def(model_path)?;
         net.set_preferable_backend(opencv::dnn::DNN_BACKEND_OPENCV)?;
         net.set_preferable_target(target)?;
         Ok(net)

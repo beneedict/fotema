@@ -11,48 +11,55 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.101"
-base64 = "0.22.1"
+base64 = "0.23.0"
 chrono = "0.4.44"
 fast_image_resize = { version = "6.0.0", features = ["image"] }
 ffmpeg-next = "8.0.0"
 gdk4 = "0.11.2"
 gio = "0.22.5"
 glycin = { version = "3.1.0", features = ["gdk4"] }
-# Pinned to 0.9.4: >= 0.9.5 fails to build on stable Rust (const-fn mul_add).
+# Hold at 0.9.4. Version 0.9.5 and later do not build on stable Rust. They use
+# f64::mul_add in a const function, and that function is not stable.
 h3o = "=0.9.4"
 image = "0.25.9"
 kamadak-exif = "0.6.1"
 rayon = "1.11.0"
 refinery = { version = "0.9.1", features = ["rusqlite"] }
 rusqlite = { version = "0.38.0", features = ["bundled", "chrono"] }
-rust-faces = {git = "https://github.com/blissd/fotema-rust-faces.git", tag = "v2.0.1", features = ["viz"]}
+rust-faces = {git = "https://github.com/blissd/fotema-rust-faces.git", tag = "v2.1.0", features = ["viz"]}
 sm_motion_photo = "0.1.5"
 strum = { version = "0.28", features = ["derive"] }
 tempfile = "3.27.0"
 tracing = "0.1.44"
 walkdir = "2.5.0"
-opencv = {version = "0.98.2", default-features = false, features = ["clang-runtime", "objdetect", "imgcodecs", "dnn"]}
+opencv = {version = "0.100.1", default-features = false, features = ["clang-runtime", "features2d", "objdetect", "imgcodecs", "dnn"]}
 itertools = "0.14.0"
-reqwest = { version = "0.13.1", features = ["blocking"] }
+reqwest = { version = "0.13.4", features = ["blocking"] }
 futures = "0.3.32"
 url = "2.5.7"
 md5 = "0.8.0"
 thiserror = "2.0.18"
 byteorder = "1.5.0"
+video-rs = {version = "0.11", features = ["ndarray"]}
 quick-xml = "0.37.5"
-# CLIP smart search. `ort` is already pulled in transitively by rust-faces and the
-# onnxruntime dylib is bundled in the Flatpak and located via ORT_DYLIB_PATH
-# (see src/main.rs). Pin to the same version the lockfile already resolves and use
-# `load-dynamic` so we reuse that bundled library rather than linking a second copy.
-# default-features = false avoids pulling `download-binaries` (which would try to
-# fetch onnxruntime at build time).
-# `webgpu` enables the cross-vendor WebGPU EP (Dawn→Vulkan/Metal/D3D) so the same
-# build can use Intel/AMD/NVIDIA/ARM GPUs once a WebGPU-capable onnxruntime is
-# bundled. EP features only gate the Rust API under load-dynamic (no build-time SDK
-# needed) — the EP must also be present in the loaded onnxruntime to actually work.
-ort = { version = "=2.0.0-rc.12", default-features = false, features = ["load-dynamic", "webgpu"] }
-# Pure-Rust tokenizer for the CLIP text encoder. default-features = false drops the
-# C/C++ deps (onig, esaxx_fast, progressbar); `fancy-regex` is the pure-Rust regex
-# engine (tokenizers requires either it or the C `onig`). Inference (from_file +
-# encode) only needs this.
+# The CLIP smart search uses `ort`. The crate rust-faces already includes `ort`.
+# The Flatpak contains the onnxruntime library, and src/main.rs finds it with
+# ORT_DYLIB_PATH. Hold `ort` at the version that rust-faces selects. Then the build
+# links only one copy of `ort`. Use `load-dynamic` to load the library from the
+# Flatpak. Set default-features to false to prevent `download-binaries`. That
+# feature downloads onnxruntime during the build.
+# The feature `webgpu` gives the WebGPU execution provider. This provider uses Dawn
+# with Vulkan, Metal or D3D. Thus one build can use an Intel, AMD, NVIDIA or ARM
+# GPU. The onnxruntime library must also contain the provider.
+# From rc.13 each execution provider structure, for example `ep::CUDA`, has its
+# own feature. Thus you must list here each execution provider that clip.rs uses.
+# With `load-dynamic` a feature controls only the Rust API. The build does not need
+# a CUDA or CoreML SDK. If the onnxruntime library does not contain an execution
+# provider, the application ignores it and uses the CPU.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic", "webgpu", "cuda", "coreml"] }
+# The CLIP text encoder uses this tokenizer. The crate is pure Rust. Set
+# default-features to false to remove the C and C++ dependencies onig, esaxx_fast
+# and progressbar. The feature `fancy-regex` gives a regular expression engine in
+# pure Rust. The crate needs this engine or the C library onig. The functions
+# from_file and encode need no other feature.
 tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }

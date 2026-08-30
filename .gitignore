@@ -19,5 +19,23 @@ target/
 /.vscode
 .flatpak-builder/
 
+# Local build and run logs.
+/.build-time.log
+/.clip-build.log
+/.flatpak-build.tslog
+/.fotema-run.log
+/.merge-build.log
+
+# Syncthing ignore list. Each device keeps its own copy, because Syncthing does
+# not synchronise this file.
+/.stignore
+
+# Local notes for Claude. Kept out of git so it never reaches an upstream pull
+# request. Syncthing copies it to the other devices.
+/CLAUDE.md
+
+# Flatpak build state outside the project folder needs no entry here.
+/_flatpak_app/
+
 # Local sample media for testing (not part of the project)
 /Beispielfotos/

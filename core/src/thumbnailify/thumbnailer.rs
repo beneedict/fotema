@@ -3,26 +3,26 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::collections::HashMap;
 use std::io::BufWriter;
-use std::{
-    fs,
-    io,
-    path::{Path, PathBuf},
-    time::UNIX_EPOCH,
-};
+use std::{fs, io, path::Path, path::PathBuf};
 
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::FlatpakPathBuf;
-use crate::thumbnailify::{
+
+use super::{
+    ThumbnailQuality,
     error::ThumbnailError,
-    file::{get_failed_thumbnail_output, get_file_uri, get_thumbnail_hash_output},
+    file,
+    file::{
+        THUMBNAIL_JPEG_QUALITY, get_failed_thumbnail_output, get_file_uri,
+        get_thumbnail_hash_output, is_thumbnail_up_to_date,
+    },
     hash::compute_hash,
     sizes::ThumbnailSize,
 };
 
-use image::DynamicImage;
+use image::{DynamicImage, ImageBuffer, Rgba};
 
 use fast_image_resize as fr;
 use fr::images::Image;
@@ -30,169 +30,142 @@ use fr::{ResizeOptions, Resizer};
 
 use tempfile;
 
-/// Checks whether the thumbnail file at `thumb_path` is up to date with respect
-/// to the source image at `source_path`. It verifies two metadata fields in the PNG:
+/// The sizes that the application makes immediately for each visual item. The
+/// list starts with the largest size. The face detector and the CLIP encoder read
+/// the `XLarge` size. The album grids use the smaller sizes. Without the smaller
+/// sizes, a grid must decode a 512 pixel image for each tile.
 ///
-/// - "Thumb::MTime": the source file's modification time (in seconds since UNIX_EPOCH)
-/// - "Thumb::Size": the source file's size in bytes (only checked if present)
-///
-/// Returns true if "Thumb::MTime" is present and matches the source file's modification time,
-/// and if "Thumb::Size" is present it must match the source file's size.
-pub fn is_thumbnail_up_to_date(thumb_path: &Path, host_path: &Path) -> bool {
-    // Format-agnostic staleness check: the thumbnail is current if it was
-    // written at or after the source's last modification. (Thumbnails are now
-    // JPEG, so we no longer embed/read PNG "Thumb::MTime" metadata.)
-    let thumb_mtime = match std::fs::metadata(thumb_path).and_then(|m| m.modified()) {
-        Ok(t) => t,
-        Err(e) => {
-            debug!("Failed to read thumbnail mtime {:?}: {}", thumb_path, e);
-            return false;
-        }
-    };
+/// The sequence is important. The application makes each size from the previous
+/// larger result, not from the source image. This method is faster and gives a
+/// smoother result.
+const EAGER_SIZES: [ThumbnailSize; 4] = [
+    ThumbnailSize::XLarge,
+    ThumbnailSize::Large,
+    ThumbnailSize::Normal,
+    ThumbnailSize::Small,
+];
 
-    let source_mtime = match std::fs::metadata(host_path).and_then(|m| m.modified()) {
-        Ok(t) => t,
-        Err(e) => {
-            debug!("Failed to read source mtime {:?}: {}", host_path, e);
-            return false;
-        }
-    };
-
-    thumb_mtime >= source_mtime
+#[derive(Clone, Debug)]
+pub struct Thumbnailer {
+    thumbnails_path: PathBuf,
 }
+
+impl Thumbnailer {
+    pub fn build(thumbnails_path: &Path) -> Thumbnailer {
+        Thumbnailer {
+            thumbnails_path: thumbnails_path.into(),
+        }
+    }
+
+    pub fn is_failed(&self, host_path: &Path) -> bool {
+        file::is_failed(&self.thumbnails_path, host_path)
+    }
+
+    pub fn is_thumbnail_up_to_date(&self, host_path: &Path) -> bool {
+        file::is_thumbnail_up_to_date(&self.thumbnails_path, host_path)
+    }
+
+    pub fn get_thumbnail_hash_output(&self, hash: &str, size: ThumbnailSize) -> PathBuf {
+        file::get_thumbnail_hash_output(&self.thumbnails_path, hash, size)
+    }
+
+    pub fn get_thumbnail_path(&self, host_path: &Path, size: ThumbnailSize) -> PathBuf {
+        file::get_thumbnail_path(&self.thumbnails_path, host_path, size)
+    }
+
+    /// Find the path of the thumbnail for the given size. If that size does not
+    /// exist, find the path of an alternative size. If no thumbnail exists, the
+    /// function returns None.
+    pub fn nearest_thumbnail(&self, hash: &str, size: ThumbnailSize) -> Option<PathBuf> {
+        // Each candidate also accepts the PNG format of an older build. Thus the
+        // application uses an old cache and does not classify it as absent.
+        if let Some(path) = file::find_existing_thumbnail(&self.thumbnails_path, hash, size) {
+            return Some(path);
+        }
+
+        use ThumbnailSize::*;
+        let fallback_order = match size {
+            // TODO Examine if the function must exclude some alternative sizes.
+            // A request for a small thumbnail can return an XXLarge thumbnail.
+            Small => [Small, Normal, Large, XLarge, XXLarge],
+            Normal => [Normal, Large, XLarge, XXLarge, Small],
+            Large => [Large, XLarge, XXLarge, Normal, Small],
+            XLarge => [XLarge, XXLarge, Large, Normal, Small],
+            XXLarge => [XXLarge, XLarge, Large, Normal, Small],
+        };
+
+        fallback_order
+            .iter()
+            .find_map(|s| file::find_existing_thumbnail(&self.thumbnails_path, hash, *s))
+    }
+
+    pub fn generate_thumbnail(
+        &self,
+        path: &FlatpakPathBuf,
+        size: ThumbnailSize,
+        quality: ThumbnailQuality,
+        src_image: DynamicImage,
+    ) -> Result<(), ThumbnailError> {
+        generate_thumbnail(&self.thumbnails_path, path, size, quality, src_image)?;
+        Ok(())
+    }
+
+    /// Make all the necessary sizes in one operation. The function uses each
+    /// result as the source for the next smaller size.
+    pub fn generate_all_thumbnails(
+        &self,
+        path: &FlatpakPathBuf,
+        quality: ThumbnailQuality,
+        src_image: DynamicImage,
+    ) -> Result<(), ThumbnailError> {
+        generate_all_thumbnails(&self.thumbnails_path, path, quality, src_image)
+    }
+
+    pub fn write_failed_thumbnail(&self, path: &FlatpakPathBuf) -> Result<(), ThumbnailError> {
+        file::write_failed_thumbnail(&self.thumbnails_path, path)
+    }
+
+    /// Convert each PNG thumbnail in this cache to JPEG. Then delete the PNG file.
+    pub fn migrate_legacy_png_thumbnails(&self) -> file::MigrationStats {
+        file::migrate_legacy_png_thumbnails(&self.thumbnails_path)
+    }
+}
+
+/// Make all the necessary thumbnail sizes for `path`. The function makes each
+/// size from the previous larger size.
 pub fn generate_all_thumbnails(
     thumbnails_base_dir: &Path,
     path: &FlatpakPathBuf,
+    quality: ThumbnailQuality,
     src_image: DynamicImage,
 ) -> Result<(), ThumbnailError> {
-    let mut labels: HashMap<String, String> = HashMap::with_capacity(3);
-    // FIXME hard-coded app-id
-    labels.insert("Software".into(), "app.fotema.Fotema".into());
+    let mut current = src_image;
 
-    let uri = get_file_uri(&path.host_path)?;
-    labels.insert("Thumb::URI".into(), uri);
-
-    let metadata = std::fs::metadata(&path.sandbox_path)?;
-    let size = metadata.len();
-    labels.insert("Thumb::Size".into(), size.to_string());
-
-    let modified_time = metadata.modified()?;
-    let mtime_unix = modified_time
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
-    labels.insert("Thumb::MTime".into(), mtime_unix.to_string());
-
-    let sizes = &[
-        ThumbnailSize::XLarge,
-        ThumbnailSize::Large,
-        ThumbnailSize::Normal,
-        ThumbnailSize::Small,
-    ];
-
-    let src_image = DynamicImage::from(src_image.into_rgba8());
-
-    let dimension = sizes[0].to_dimension() as f32;
-
-    let src_width: f32 = src_image.width() as f32;
-    let src_height: f32 = src_image.height() as f32;
-    let src_longest_edge = f32::max(src_width, src_height);
-
-    let scale: f32 = f32::min(1.0, dimension / src_longest_edge);
-
-    let thumbnail_width = (src_width * scale) as u32;
-    let thumbnail_height = (src_height * scale) as u32;
-
-    // An idea borrowed from Glycin.
-    // Resize to double thumbnail size using a fast algorithm, and them
-    // resize result to final size using high-quality algorithm.
-    // FIXME don't rough scale if smaller that double thumbnail size?
-    let src_image = rough_resize(src_image, thumbnail_width, thumbnail_height)?;
-
-    generate_thumbnail_recursive(thumbnails_base_dir, path, labels, sizes, src_image)
-}
-
-fn generate_thumbnail_recursive(
-    thumbnails_base_dir: &Path,
-    path: &FlatpakPathBuf,
-    labels: HashMap<String, String>,
-    sizes: &[ThumbnailSize],
-    src_image: Image<'static>,
-) -> Result<(), ThumbnailError> {
-    let size = if !sizes.is_empty() {
-        sizes[0]
-    } else {
-        return Ok(());
-    };
-
-    // `canonicalize()` will fail if `host_path` does not exist... which means
-    // that it will __never work__ inside the Flatpak sandbox.
-    // let abs_path = host_path.canonicalize()?;
-
-    //let _ = abs_path
-    //    .to_str()
-    //   .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid file path"))?;
-
-    let file_uri = get_file_uri(&path.host_path)?;
-
-    // Compute the MD5 hash from the file URI.
-    let hash = compute_hash(&file_uri);
-
-    // Check if the fail marker exists and is up to date
-    let fail_path = get_failed_thumbnail_output(thumbnails_base_dir, &hash);
-    if fail_path.exists() && is_thumbnail_up_to_date(&fail_path, &path.sandbox_path) {
-        info!(
-            "A fail marker exists and is up-to-date, returning fail marker at {:?}",
-            fail_path
-        );
-
-        return generate_thumbnail_recursive(
-            thumbnails_base_dir,
-            path,
-            labels,
-            &sizes[1..],
-            src_image,
-        );
+    for size in EAGER_SIZES {
+        current = generate_thumbnail(thumbnails_base_dir, path, size, quality, current)?;
     }
 
-    // Determine the expected output thumbnail path.
-    let thumb_path = get_thumbnail_hash_output(thumbnails_base_dir, &hash, size);
-
-    // If the thumbnail already exists and is up to date, return it immediately.
-    if thumb_path.exists() && is_thumbnail_up_to_date(&thumb_path, &path.host_path) {
-        info!(
-            "Cached thumbnail at {:?} is up-to-date, returning it",
-            thumb_path
-        );
-        return generate_thumbnail_recursive(
-            thumbnails_base_dir,
-            path,
-            labels,
-            &sizes[1..],
-            src_image,
-        );
-    }
-
-    let thumbnail = quality_resize(src_image, size)?;
-    write_thumbnail(&thumb_path, &thumbnail, &labels)?;
-
-    generate_thumbnail_recursive(thumbnails_base_dir, path, labels, &sizes[1..], thumbnail)
+    Ok(())
 }
 
-/// Generate a thumbnail for a file that exists outside of the Flatpak sandbox.
-/// NOTE: the sandbox_path/host_path could point to a picture or a video.
-/// `thumbnails_base_dir` - thumbnail base directory
-/// `host_path` - path _outside_ sandbox to file we are generating thumbnail for.
-/// `sandbox_path` - path _inside_ sandbox to file we are generating thumbnail for.
-/// `size` - standard XDG thumbnail size.
-/// `src_image` - image data for thumbnail. Image data will have been loaded in a safe way using Glycin.
+/// Make a thumbnail for a file that is outside of the Flatpak sandbox.
+/// NOTE: the sandbox_path and the host_path can point to a picture or to a video.
+/// `thumbnails_base_dir` - the base directory of the thumbnail cache.
+/// `host_path` - the path to the file _outside_ the sandbox.
+/// `sandbox_path` - the path to the file _inside_ the sandbox.
+/// `size` - the standard XDG thumbnail size.
+/// `quality` - the thumbnail quality.
+/// `src_image` - the image data for the thumbnail. Glycin loads this data in a safe way.
+///
+/// The function returns the new image. Thus the caller can make smaller sizes
+/// from this result.
 pub fn generate_thumbnail(
     thumbnails_base_dir: &Path,
     path: &FlatpakPathBuf,
     size: ThumbnailSize,
+    quality: ThumbnailQuality,
     src_image: DynamicImage,
-) -> Result<PathBuf, ThumbnailError> {
+) -> Result<DynamicImage, ThumbnailError> {
     // info!("Generating thumbnail for hostpath: {:?}", host_path);
 
     // `canonicalize()` will fail if `host_path` does not exist... which means
@@ -212,41 +185,25 @@ pub fn generate_thumbnail(
     let fail_path = get_failed_thumbnail_output(thumbnails_base_dir, &hash);
     if fail_path.exists() && is_thumbnail_up_to_date(&fail_path, &path.sandbox_path) {
         info!(
-            "A fail marker exists and is up-to-date, returning fail marker at {:?}",
+            "A fail marker exists and is up-to-date, refusing to thumbnail {:?}",
             fail_path
         );
-        return Ok(fail_path);
+        Err(io::Error::other(
+            "An up-to-date fail marker exists for this file",
+        ))?;
     }
 
     // Determine the expected output thumbnail path.
     let thumb_path = get_thumbnail_hash_output(thumbnails_base_dir, &hash, size);
 
-    // If the thumbnail already exists and is up to date, return it immediately.
-    if thumb_path.exists() && is_thumbnail_up_to_date(&thumb_path, &path.host_path) {
-        info!(
-            "Cached thumbnail at {:?} is up-to-date, returning it",
-            thumb_path
-        );
-        return Ok(thumb_path);
-    }
     // Prepare a temporary file in the same directory as the final thumbnail.
     // Using `tempfile_in` ensures that the temp file is on the same filesystem
     // so that we can atomically persist (rename) it.
-    let thumb_dir = thumb_path.parent().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            "Thumbnail path has no parent directory",
-        )
-    })?;
+    let thumb_dir = thumb_path
+        .parent()
+        .ok_or_else(|| io::Error::other("Thumbnail path has no parent directory"))?;
 
     fs::create_dir_all(thumb_dir)?;
-
-    let named_temp = tempfile::Builder::new()
-        .prefix("thumb-")
-        .suffix(".jpg.tmp")
-        .tempfile_in(thumb_dir)?;
-
-    let temp_path = named_temp.path().to_owned();
 
     let dimension = size.to_dimension() as f32;
 
@@ -261,144 +218,77 @@ pub fn generate_thumbnail(
     let dst_width = (src_width * scale) as u32;
     let dst_height = (src_height * scale) as u32;
 
-    let dst_image = resize(src_image, dst_width, dst_height)?;
+    let mut dst_image = Image::new(dst_width, dst_height, fr::PixelType::U8x4);
 
-    let file = std::fs::File::create(&temp_path)?;
-    let file = BufWriter::new(file);
-    write_jpeg(file, dst_width, dst_height, dst_image.buffer())?;
+    let filter_type = match quality {
+        ThumbnailQuality::Normal => fast_image_resize::FilterType::Hamming,
+        ThumbnailQuality::High => fast_image_resize::FilterType::Lanczos3,
+    };
 
-    named_temp.persist(&thumb_path)?;
+    let mut resizer = Resizer::new();
+    let resize_options =
+        ResizeOptions::new().resize_alg(fast_image_resize::ResizeAlg::Convolution(filter_type));
 
-    return Ok(thumb_path.into());
-}
+    resizer.resize(&src_image, &mut dst_image, &resize_options)?;
 
-/// Encode an RGBA pixel buffer as a compact JPEG. Thumbnails are opaque, so the
-/// alpha channel is dropped. Replaces the previous lossless PNG output.
-fn write_jpeg<W: std::io::Write>(
-    writer: W,
-    width: u32,
-    height: u32,
-    rgba: &[u8],
-) -> Result<(), ThumbnailError> {
-    const QUALITY: u8 = 82;
+    let thumbnail = fast_image_to_dynamic(&dst_image)?;
 
-    let mut rgb = Vec::with_capacity(width as usize * height as usize * 3);
-    for px in rgba.chunks_exact(4) {
-        rgb.extend_from_slice(&px[0..3]);
+    // If the thumbnail exists and is current, the function writes no file. But it
+    // returns the new image. Thus a caller that makes all the sizes can continue.
+    if thumb_path.exists() && is_thumbnail_up_to_date(&thumb_path, &path.host_path) {
+        info!(
+            "Cached thumbnail at {:?} is up-to-date, keeping it",
+            thumb_path
+        );
+        return Ok(thumbnail);
     }
-
-    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(writer, QUALITY);
-    encoder.encode(&rgb, width, height, image::ExtendedColorType::Rgb8)?;
-    Ok(())
-}
-
-fn resize(
-    src_image: DynamicImage,
-    thumbnail_width: u32,
-    thumbnail_height: u32,
-) -> Result<Image<'static>, ThumbnailError> {
-    // An idea borrowed from Glycin.
-    // Resize to double thumbnail size using a fast algorithm, and them
-    // resize result to final size using high-quality algorithm.
-
-    let mut rough_scaled = Image::new(
-        thumbnail_width * 2,
-        thumbnail_height * 2,
-        fr::PixelType::U8x4,
-    );
-
-    let resize_options = ResizeOptions::new().resize_alg(fast_image_resize::ResizeAlg::Nearest);
-
-    let mut resizer = Resizer::new();
-    resizer.resize(&src_image, &mut rough_scaled, &resize_options)?;
-
-    let mut final_scaled = Image::new(thumbnail_width, thumbnail_height, fr::PixelType::U8x4);
-
-    let mut resizer = Resizer::new();
-    let resize_options = ResizeOptions::new().resize_alg(
-        fast_image_resize::ResizeAlg::Convolution(fast_image_resize::FilterType::Lanczos3),
-    );
-
-    resizer.resize(&rough_scaled, &mut final_scaled, &resize_options)?;
-    Ok(final_scaled)
-}
-
-fn rough_resize(
-    src_image: DynamicImage,
-    thumbnail_width: u32,
-    thumbnail_height: u32,
-) -> Result<Image<'static>, ThumbnailError> {
-    // An idea borrowed from Glycin.
-    // Resize to double thumbnail size using a fast algorithm, and them
-    // resize result to final size using high-quality algorithm.
-
-    let mut rough_scaled = Image::new(
-        thumbnail_width * 2,
-        thumbnail_height * 2,
-        fr::PixelType::U8x4,
-    );
-
-    let resize_options = ResizeOptions::new().resize_alg(fast_image_resize::ResizeAlg::Nearest);
-
-    let mut resizer = Resizer::new();
-    resizer.resize(&src_image, &mut rough_scaled, &resize_options)?;
-    Ok(rough_scaled)
-}
-
-fn quality_resize(
-    src_image: Image<'static>,
-    size: ThumbnailSize,
-) -> Result<Image<'static>, ThumbnailError> {
-    let dimension = size.to_dimension() as f32;
-
-    let src_width: f32 = src_image.width() as f32;
-    let src_height: f32 = src_image.height() as f32;
-    let src_longest_edge = f32::max(src_width, src_height);
-
-    let scale: f32 = f32::min(1.0, dimension / src_longest_edge);
-
-    let thumbnail_width = (src_width * scale) as u32;
-    let thumbnail_height = (src_height * scale) as u32;
-
-    let mut thumbnail = Image::new(thumbnail_width, thumbnail_height, fr::PixelType::U8x4);
-
-    let mut resizer = Resizer::new();
-    let resize_options = ResizeOptions::new().resize_alg(
-        fast_image_resize::ResizeAlg::Convolution(fast_image_resize::FilterType::Lanczos3),
-    );
-
-    resizer.resize(&src_image, &mut thumbnail, &resize_options)?;
-    Ok(thumbnail)
-}
-
-fn write_thumbnail(
-    thumb_path: &Path,
-    thumbnail: &Image<'static>,
-    _labels: &HashMap<String, String>,
-) -> Result<(), ThumbnailError> {
-    // Prepare a temporary file in the same directory as the final thumbnail.
-    // Using `tempfile_in` ensures that the temp file is on the same filesystem
-    // so that we can atomically persist (rename) it.
-    let thumb_dir = thumb_path.parent().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            "Thumbnail path has no parent directory",
-        )
-    })?;
-
-    fs::create_dir_all(thumb_dir)?;
 
     let named_temp = tempfile::Builder::new()
         .prefix("thumb-")
         .suffix(".jpg.tmp")
         .tempfile_in(thumb_dir)?;
 
-    let temp_path = named_temp.path().to_owned();
+    // The application writes a thumbnail as JPEG, not as PNG. For a photo library
+    // the JPEG file is 5 to 10 times smaller. At this size you cannot see the loss
+    // of quality. A JPEG file has no alpha channel. Thus convert the image to RGB.
+    //
+    // NOTE: the application cannot write the XDG text chunks "Thumb::URI",
+    // "Thumb::MTime" and "Thumb::Size" into a JPEG file. It uses the file
+    // modification time instead. Refer to `file::is_thumbnail_up_to_date`.
+    let rgb = thumbnail.to_rgb8();
 
-    let file = std::fs::File::create(&temp_path)?;
-    let file = BufWriter::new(file);
-    write_jpeg(file, thumbnail.width(), thumbnail.height(), thumbnail.buffer())?;
+    {
+        let file = BufWriter::new(fs::File::create(named_temp.path())?);
+        let mut encoder =
+            image::codecs::jpeg::JpegEncoder::new_with_quality(file, THUMBNAIL_JPEG_QUALITY);
+        encoder.encode(
+            rgb.as_raw(),
+            rgb.width(),
+            rgb.height(),
+            image::ExtendedColorType::Rgb8,
+        )?;
+    }
 
     named_temp.persist(&thumb_path)?;
-    Ok(())
+
+    // The new JPEG file replaces the thumbnail of an older build at the same hash.
+    let legacy_path = thumb_path.with_extension("png");
+    if legacy_path.exists() {
+        let _ = fs::remove_file(&legacy_path);
+    }
+
+    Ok(thumbnail)
+}
+
+fn fast_image_to_dynamic(img: &Image) -> Result<DynamicImage, ThumbnailError> {
+    let width = img.width();
+    let height = img.height();
+    let pixels = img.buffer();
+
+    // Make an ImageBuffer<u8, &[u8]> around the slice.
+    // Then convert it into an owned buffer.
+    let buffer = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, pixels.to_vec())
+        .ok_or(io::Error::other("Failed to create ImageBuffer"))?;
+
+    Ok(DynamicImage::ImageRgba8(buffer))
 }

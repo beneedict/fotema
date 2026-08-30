@@ -16,7 +16,11 @@ ROOT="$PWD"
 MANIFEST="build-aux/app.fotema.Fotema.json"
 METAINFO="data/app.fotema.Fotema.metainfo.xml.in.in"
 APPID="app.fotema.Fotema"
-STATE="$ROOT/.flatpak"
+# Keep the build state out of the project folder by default. A file sync tool,
+# for example Syncthing, monitors the project folder. That tool renames files
+# that the build extracts, and then the build fails. Set FOTEMA_BUILD_STATE to
+# select a different location.
+STATE="${FOTEMA_BUILD_STATE:-$HOME/.cache/fotema-build}"
 COUNTER="$ROOT/build-aux/.build-number"
 BUNDLE="$ROOT/fotema.flatpak"
 
@@ -108,7 +112,7 @@ BUILDDIR="$STATE/build"
 rm -rf "$BUILDDIR" "$REPO"
 
 flatpak install -y --user --noninteractive flathub org.flatpak.Builder >/dev/null 2>&1 || true
-flatpak run --filesystem="$ROOT" --share=network org.flatpak.Builder \
+flatpak run --filesystem="$ROOT" --filesystem="$STATE" --share=network org.flatpak.Builder \
     --user --install-deps-from=flathub --force-clean --disable-rofiles-fuse \
     --state-dir="$STATE/builder" \
     --repo="$REPO" "$BUILDDIR" "$MANIFEST"

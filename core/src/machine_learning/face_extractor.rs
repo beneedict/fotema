@@ -3,11 +3,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::people::FaceDetectionCandidate;
+use crate::texture_utils;
 use crate::thumbnailify::{ThumbnailSize, Thumbnailer};
 
 use anyhow::*;
 
 use super::nms::Nms;
+
 use std::path::{Path, PathBuf};
 use std::result::Result::Ok;
 
@@ -15,7 +17,6 @@ use rust_faces::{
     BlazeFaceParams, Face as DetectedFace, FaceDetection, FaceDetectorBuilder, ToArray3,
 };
 
-use gdk4::prelude::TextureExt;
 use image::DynamicImage;
 use tracing::{debug, error, info};
 
@@ -306,33 +307,8 @@ impl FaceExtractor {
         let loader = glycin::Loader::new(file);
         let image = loader.load().await?;
         let frame = image.next_frame().await?;
-
-        // Download raw RGBA pixels directly instead of round-tripping through a
-        // full PNG encode + decode.
-        let texture = frame.texture();
-        let width = texture.width() as u32;
-        let height = texture.height() as u32;
-
-        let mut downloader = gdk4::TextureDownloader::new(&texture);
-        downloader.set_format(gdk4::MemoryFormat::R8g8b8a8);
-        let (bytes, stride) = downloader.download_bytes();
-
-        let row_bytes = width as usize * 4;
-        let data = if stride == row_bytes {
-            bytes.to_vec()
-        } else {
-            let mut packed = Vec::with_capacity(row_bytes * height as usize);
-            for y in 0..height as usize {
-                let start = y * stride;
-                packed.extend_from_slice(&bytes[start..start + row_bytes]);
-            }
-            packed
-        };
-
-        let buffer = image::RgbaImage::from_raw(width, height, data)
-            .ok_or_else(|| anyhow!("Texture buffer size mismatch for {:?}", source_path))?;
-
-        Ok(DynamicImage::ImageRgba8(buffer))
+        let image = texture_utils::texture_to_rgba(frame.texture())?;
+        Ok(image)
     }
 }
 

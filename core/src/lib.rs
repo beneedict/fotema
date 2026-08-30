@@ -11,6 +11,7 @@ pub mod people;
 pub mod photo;
 pub mod scanner;
 pub mod search;
+pub mod texture_utils;
 pub mod thumbnailify;
 pub mod time;
 pub mod video;
