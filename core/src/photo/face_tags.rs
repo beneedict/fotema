@@ -152,39 +152,51 @@ pub fn legacy_sidecar_path(photo_path: &Path) -> PathBuf {
 
 /// Read named face-region tags for a photo. The function reads the sidecar files
 /// first, because a photo manager keeps the sidecar current and the photo itself
-/// unchanged. It reads the photo only when no sidecar gives tags.
+/// unchanged. A library can hold both forms of the sidecar, for example the
+/// "photo.xmp" of digiKam and the "photo.jpg.xmp" of Fotema. The function then
+/// takes the regions of both, and the first file wins for the same face. It
+/// reads the photo only when no sidecar gives tags.
 pub fn read_face_tags(path: &Path) -> Vec<FaceTag> {
+    let mut regions: Vec<ParsedRegion> = Vec::new();
     for sidecar in [sidecar_path(path), legacy_sidecar_path(path)] {
         if sidecar == path {
             continue;
         }
-        let tags = read_tags_from_file(&sidecar);
-        if !tags.is_empty() {
-            return tags;
+        for region in regions_from_bytes(&read_head(&sidecar)) {
+            if !regions.iter().any(|known| same_place(known, &region)) {
+                regions.push(region);
+            }
         }
     }
-    read_tags_from_file(path)
+    if !regions.is_empty() {
+        return regions.into_iter().map(|r| r.tag).collect();
+    }
+    face_tags_from_bytes(&read_head(path))
 }
 
-/// Read the first megabyte of a file and parse the XMP packet in it.
-fn read_tags_from_file(path: &Path) -> Vec<FaceTag> {
-    let file = match std::fs::File::open(path) {
-        std::result::Result::Ok(f) => f,
-        std::result::Result::Err(_) => return Vec::new(),
-    };
+/// Read the first megabyte of a file. A file that cannot be read gives no bytes.
+fn read_head(path: &Path) -> Vec<u8> {
     let mut buf = Vec::new();
-    if file.take(1024 * 1024).read_to_end(&mut buf).is_err() {
-        return Vec::new();
+    if let Ok(file) = std::fs::File::open(path) {
+        let _ = file.take(1024 * 1024).read_to_end(&mut buf);
     }
-    face_tags_from_bytes(&buf)
+    buf
 }
 
 /// Parse named face-region tags from already-read header bytes (the part of the
 /// file that holds the XMP packet). Lets EXIF and XMP be extracted from a single
 /// file read.
 pub fn face_tags_from_bytes(bytes: &[u8]) -> Vec<FaceTag> {
+    regions_from_bytes(bytes)
+        .into_iter()
+        .map(|r| r.tag)
+        .collect()
+}
+
+/// Parse the regions in already-read bytes, with their origin.
+fn regions_from_bytes(bytes: &[u8]) -> Vec<ParsedRegion> {
     match extract_xmp(bytes) {
-        Some(xmp) => parse_face_tags(&xmp),
+        Some(xmp) => parse_regions(&xmp),
         None => Vec::new(),
     }
 }
@@ -222,6 +234,7 @@ enum Field {
 }
 
 /// Parse the XMP XML for MWG / Microsoft face regions.
+#[cfg(test)]
 fn parse_face_tags(xmp: &str) -> Vec<FaceTag> {
     parse_regions(xmp).into_iter().map(|r| r.tag).collect()
 }
@@ -1348,6 +1361,32 @@ mod tests {
             // The copy of the original file is there.
             assert!(dir.path().join("a.jpg.xmp.fotema-bak").exists());
         }
+    }
+
+    #[test]
+    fn reads_both_sidecar_forms_and_prefers_the_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let photo = dir.path().join("a.jpg");
+        std::fs::write(&photo, b"").unwrap();
+        // digiKam names Lukas in "a.xmp"; Fotema names Anna in "a.jpg.xmp".
+        std::fs::write(legacy_sidecar_path(&photo), DIGIKAM).unwrap();
+        std::fs::write(
+            sidecar_path(&photo),
+            write(EMPTY_SIDECAR, &[tag("Anna", 0.25)], &[]),
+        )
+        .unwrap();
+
+        let tags = read_face_tags(&photo);
+        let names: Vec<&str> = tags.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["Anna", "Lukas Nimm"]);
+
+        // The same face in both files: the Fotema file wins.
+        let mut renamed = tag("Lukas Nimmervoll", 0.54);
+        renamed.area = Some(lukas());
+        std::fs::write(sidecar_path(&photo), write(EMPTY_SIDECAR, &[renamed], &[])).unwrap();
+        let tags = read_face_tags(&photo);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].name, "Lukas Nimmervoll");
     }
 
     #[test]
