@@ -35,11 +35,7 @@ i18n-embed-fl = "0.10.0"
 unic-langid = "0.9.5"
 lazy_static = "1.4.0"
 libshumate-sys = "0.8.0"
-# Hold h3o at 0.9.4. Version 0.9.5 and later use f64::mul_add in a const function.
-# That function is not stable. Thus those versions do not build on stable Rust.
-# Version 0.9.4 is the last version that builds. Examine this again after
-# const mul_add becomes stable.
-h3o = "=0.9.4"
+h3o = "0.11.0"
 ashpd = { version = "0.13.11", default-features = false, features = ["async-io", "documents", "file_chooser", "gtk4"] }
 regex = "1.12.2"
 deadpool = "0.13.0"

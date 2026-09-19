@@ -18,14 +18,12 @@ ffmpeg-next = "8.0.0"
 gdk4 = "0.11.2"
 gio = "0.22.5"
 glycin = { version = "3.1.0", features = ["gdk4"] }
-# Hold at 0.9.4. Version 0.9.5 and later do not build on stable Rust. They use
-# f64::mul_add in a const function, and that function is not stable.
-h3o = "=0.9.4"
+h3o = "0.11.0"
 image = "0.25.9"
 kamadak-exif = "0.6.1"
 rayon = "1.11.0"
 refinery = { version = "0.9.1", features = ["rusqlite"] }
-rusqlite = { version = "0.38.0", features = ["bundled", "chrono"] }
+rusqlite = { version = "0.39.0", features = ["bundled", "chrono"] }
 rust-faces = {git = "https://github.com/blissd/fotema-rust-faces.git", tag = "v2.1.0", features = ["viz"]}
 sm_motion_photo = "0.1.5"
 strum = { version = "0.28", features = ["derive"] }
