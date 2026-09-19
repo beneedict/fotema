@@ -334,6 +334,10 @@ onboard-select-pictures =
 prefs-machine-learning-section = Künstliches Lernen
     .description = Konfiguriere die Funktionen für künstliches Lernen.
 banner-stopping = Prozesse werden angehalten...
+
+# Banner shown while Fotema writes person names to the XMP sidecar files.
+banner-write-face-tags = Personennamen werden zu den Fotos gespeichert.
+
 banner-convert-videos = Videos werden umgewandelt.
 prefs-albums-section = Alben
     .description = Alben bearbeiten.
@@ -349,6 +353,11 @@ prefs-processing-face-detection = Gesichtserkennung
     .subtitle = Erkennung von Gesichtern und von Personen, die benannt wurden. Dies kann Zeit in Anspruch nehmen.
 prefs-processing-recognition-auto = Automatische Personenerkennung
     .subtitle = Nach dem Benennen eines Gesichts wird im Hintergrund die Mediathek nach weiteren Gesichtern dieser Person durchsucht.
+
+# Preferences dialog switch for writing person names into the XMP sidecar file
+# of each photo, so a file sync tool can carry them to another computer.
+prefs-processing-write-face-tags = Personennamen zu den Fotos speichern
+    .subtitle = Schreibt die von dir bestätigten Namen in eine XMP-Begleitdatei neben jedem Foto, damit eine Synchronisierung sie auf deine anderen Rechner überträgt. Andere Daten in der Begleitdatei bleiben unverändert.
 
 prefs-processing-motion-photos = Bewegungsfotos
     .subtitle = Erkennen von Android-Bewegungsfotos und extrahieren der Videos.

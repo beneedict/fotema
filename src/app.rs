@@ -176,6 +176,11 @@ pub struct Settings {
     /// Enable processing of Android motion photos.
     pub process_motion_photos: bool,
 
+    /// Write confirmed person names into the XMP sidecar of each photo. The
+    /// feature makes files in the picture folder of the user, so the user can
+    /// stop it here.
+    pub write_face_tags: bool,
+
     /// Automatically check GitHub for a newer release on startup.
     pub update_check_enabled: bool,
 
@@ -1284,21 +1289,29 @@ impl SimpleAsyncComponent for App {
                 self.people_page.emit(PeopleAlbumInput::Refresh);
                 // A deleted person's faces become unnamed again.
                 self.faces_page.emit(UnknownPeopleInput::Refresh);
+                // The names changed, so write the sidecars again.
+                self.bootstrap.emit(BootstrapInput::ExportFaceTags);
             }
             AppMsg::PersonRenamed => {
                 self.people_page.emit(PeopleAlbumInput::Refresh);
+                // The names changed, so write the sidecars again.
+                self.bootstrap.emit(BootstrapInput::ExportFaceTags);
             }
             AppMsg::PersonIgnoredChanged => {
                 // Hidden or restored: leave the person album and refresh the
                 // overview (it re-renders the active or ignored list as set).
                 self.picture_navigation_view.pop();
                 self.people_page.emit(PeopleAlbumInput::Refresh);
+                // The names changed, so write the sidecars again.
+                self.bootstrap.emit(BootstrapInput::ExportFaceTags);
             }
             AppMsg::FacesChanged => {
                 // A face was detached/reassigned in a person album: refresh the
                 // people overview and the unknown-faces grid (stay on the album).
                 self.people_page.emit(PeopleAlbumInput::Refresh);
                 self.faces_page.emit(UnknownPeopleInput::Refresh);
+                // The names changed, so write the sidecars again.
+                self.bootstrap.emit(BootstrapInput::ExportFaceTags);
                 // A reassignment may let the person match more faces: auto-run a
                 // background recognition pass (only if enabled in settings).
                 if self.settings_state.read().face_recognition_auto {
@@ -1314,6 +1327,8 @@ impl SimpleAsyncComponent for App {
                 self.bootstrap.emit(BootstrapInput::RecognizeFacesNow);
             }
             AppMsg::RecognizeAuto => {
+                // The names changed, so write the sidecars again.
+                self.bootstrap.emit(BootstrapInput::ExportFaceTags);
                 // Triggered after naming a face: only run when the user has left
                 // auto-recognition enabled in the settings.
                 if self.settings_state.read().face_recognition_auto {
@@ -1376,6 +1391,9 @@ impl SimpleAsyncComponent for App {
                     }
                     TaskName::Migrate => {
                         // Show nothing
+                    }
+                    TaskName::ExportFaceTags => {
+                        self.banner.set_title(&fl!("banner-write-face-tags"));
                     }
                 };
             }
@@ -1498,6 +1516,7 @@ impl App {
         Ok(Settings {
             show_selfies: gio_settings.boolean("show-selfies"),
             process_motion_photos: gio_settings.boolean("process-motion-photos"),
+            write_face_tags: gio_settings.boolean("write-face-tags"),
             update_check_enabled: gio_settings.boolean("update-check-enabled"),
             face_recognition_auto: gio_settings.boolean("face-recognition-auto"),
             face_detection_mode: FaceDetectionMode::from_str(
@@ -1516,6 +1535,7 @@ impl App {
         let gio_settings = gio::Settings::new(APP_ID);
         gio_settings.set_boolean("show-selfies", settings.show_selfies)?;
         gio_settings.set_boolean("process-motion-photos", settings.process_motion_photos)?;
+        gio_settings.set_boolean("write-face-tags", settings.write_face_tags)?;
         gio_settings.set_boolean("update-check-enabled", settings.update_check_enabled)?;
         gio_settings.set_boolean("face-recognition-auto", settings.face_recognition_auto)?;
         gio_settings.set_string("face-detection-mode", settings.face_detection_mode.as_ref())?;

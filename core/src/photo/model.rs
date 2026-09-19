@@ -4,6 +4,7 @@
 
 use super::gps::GPSLocation;
 use crate::FlatpakPathBuf;
+use crate::people::model::Rect;
 
 use chrono::{DateTime, FixedOffset, TimeDelta, Utc};
 use std::fmt::Display;
@@ -111,6 +112,15 @@ pub enum Orientation {
 }
 
 impl Orientation {
+    /// True when the orientation turns the picture by 90 degrees, so the width
+    /// of the file is the height of the picture that the user sees.
+    pub fn swaps_sides(self) -> bool {
+        matches!(
+            self,
+            Orientation::WestMirrored | Orientation::West | Orientation::EastMirrored | Orientation::East
+        )
+    }
+
     pub fn from_degrees(degrees: i32) -> Self {
         match degrees {
             0 => Orientation::North,
@@ -182,4 +192,22 @@ pub struct MotionPhotoVideo {
     // Rotation of video in degrees.
     // Should be 90, 180, 270, or the negative of those.
     pub rotation: Option<i32>,
+}
+
+/// One face of a picture, as the face tag export needs it.
+#[derive(Debug, Clone)]
+pub struct ExportFace {
+    /// The confirmed name of the person. None for a face without a confirmed person.
+    pub name: Option<String>,
+    pub bounds: Rect,
+    pub is_source_original: bool,
+}
+
+/// A picture whose sidecar is out of date, with every face that this computer detected in it.
+#[derive(Debug, Clone)]
+pub struct FaceTagExportPicture {
+    pub picture_id: PictureId,
+    pub path: FlatpakPathBuf,
+    pub orientation: Option<Orientation>,
+    pub faces: Vec<ExportFace>,
 }

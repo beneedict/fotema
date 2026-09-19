@@ -60,6 +60,9 @@ pub enum PreferencesInput {
 
     UpdateFaceRecognitionAuto(bool),
 
+    /// Write person names to the XMP sidecar files.
+    UpdateWriteFaceTags(bool),
+
     UpdateProcessMotionPhotos(bool),
 
     Sort(AlbumSort),
@@ -171,6 +174,18 @@ impl SimpleAsyncComponent for PreferencesDialog {
                     },
 
                     adw::SwitchRow {
+                        set_title: &fl!("prefs-processing-write-face-tags"),
+                        set_subtitle: &fl!("prefs-processing-write-face-tags", "subtitle"),
+
+                        #[watch]
+                        set_active: model.settings.write_face_tags,
+
+                        connect_active_notify[sender] => move |switch| {
+                            let _ = sender.input_sender().send(PreferencesInput::UpdateWriteFaceTags(switch.is_active()));
+                        },
+                    },
+
+                    adw::SwitchRow {
                         set_title: &fl!("prefs-processing-motion-photos"),
                         set_subtitle: &fl!("prefs-processing-motion-photos", "subtitle"),
 
@@ -247,6 +262,11 @@ impl SimpleAsyncComponent for PreferencesDialog {
             PreferencesInput::UpdateFaceRecognitionAuto(enable) => {
                 info!("Update auto face recognition: {:?}", enable);
                 self.settings.face_recognition_auto = enable;
+                *self.settings_state.write() = self.settings.clone();
+            }
+            PreferencesInput::UpdateWriteFaceTags(enable) => {
+                info!("Update write face tags: {:?}", enable);
+                self.settings.write_face_tags = enable;
                 *self.settings_state.write() = self.settings.clone();
             }
             PreferencesInput::UpdateProcessMotionPhotos(enable) => {

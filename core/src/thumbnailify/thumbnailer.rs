@@ -69,6 +69,12 @@ impl Thumbnailer {
         file::get_thumbnail_hash_output(&self.thumbnails_path, hash, size)
     }
 
+    /// The path of the thumbnail of the given size, when the file exists. The
+    /// function also accepts the PNG format of an older build.
+    pub fn existing_thumbnail(&self, hash: &str, size: ThumbnailSize) -> Option<PathBuf> {
+        file::find_existing_thumbnail(&self.thumbnails_path, hash, size)
+    }
+
     pub fn get_thumbnail_path(&self, host_path: &Path, size: ThumbnailSize) -> PathBuf {
         file::get_thumbnail_path(&self.thumbnails_path, host_path, size)
     }

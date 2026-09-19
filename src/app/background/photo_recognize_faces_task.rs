@@ -18,6 +18,9 @@ use fotema_core::machine_learning::face_recognizer::{FaceEmbedder, FaceRecognize
 use fotema_core::people;
 use fotema_core::people::model::{DetectedFace, PersonForRecognition};
 use fotema_core::photo;
+use fotema_core::photo::detection_size::DetectionSize;
+use fotema_core::photo::model::Orientation;
+use fotema_core::thumbnailify::Thumbnailer;
 use fotema_core::{FaceId, FlatpakPathBuf, PersonId, PictureId};
 
 use crate::app::components::progress_monitor::{ProgressMonitor, ProgressMonitorInput, TaskName};
@@ -60,20 +63,37 @@ pub struct PhotoRecognizeFacesTask {
     progress_monitor: Arc<Reducer<ProgressMonitor>>,
 
     cache_dir: PathBuf,
+
+    // Built once from cache_dir, so the thumbnail path is not recomputed per face.
+    thumbnailer: Thumbnailer,
 }
 
 impl PhotoRecognizeFacesTask {
-    /// Unnamed, non-ignored faces grouped by their picture (id + path), for
-    /// pictures whose tags have not yet been matched.
+    /// Unnamed, non-ignored faces grouped by their picture (id, path,
+    /// orientation), for pictures whose tags have not yet been matched.
     fn unnamed_faces_by_picture(
         &self,
-    ) -> Result<Vec<(PictureId, FlatpakPathBuf, Vec<DetectedFace>)>> {
+    ) -> Result<
+        Vec<(
+            PictureId,
+            FlatpakPathBuf,
+            Option<Orientation>,
+            Vec<DetectedFace>,
+        )>,
+    > {
         // Rows are ordered by picture_id; group consecutive rows per picture.
-        let mut groups: Vec<(PictureId, FlatpakPathBuf, Vec<DetectedFace>)> = Vec::new();
-        for (picture_id, path, face) in self.photo_repo.find_unnamed_faces_with_pictures()? {
+        let mut groups: Vec<(
+            PictureId,
+            FlatpakPathBuf,
+            Option<Orientation>,
+            Vec<DetectedFace>,
+        )> = Vec::new();
+        for (picture_id, path, orientation, face) in
+            self.photo_repo.find_unnamed_faces_with_pictures()?
+        {
             match groups.last_mut() {
-                Some(last) if last.0 == picture_id => last.2.push(face),
-                _ => groups.push((picture_id, path, vec![face])),
+                Some(last) if last.0 == picture_id => last.3.push(face),
+                _ => groups.push((picture_id, path, orientation, vec![face])),
             }
         }
         Ok(groups)
@@ -84,26 +104,20 @@ impl PhotoRecognizeFacesTask {
     /// paired left-to-right by horizontal centre. Creates or reuses a person by
     /// name. Returns the number of faces named.
     fn assign_regions(
-        mut faces: Vec<DetectedFace>,
-        mut regions: Vec<photo::face_tags::FaceTag>,
+        faces: Vec<DetectedFace>,
+        regions: Vec<photo::face_tags::FaceTag>,
+        size_of: &dyn Fn(&DetectedFace) -> Option<(f32, f32)>,
         people_repo: &mut people::Repository,
         negatives: &HashMap<i64, HashSet<i64>>,
     ) -> usize {
-        if regions.is_empty() || regions.len() != faces.len() {
+        if regions.is_empty() || faces.is_empty() {
             return 0;
         }
 
-        let by_x = |a: f32, b: f32| a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal);
-        regions.sort_by(|a, b| by_x(a.center_x, b.center_x));
-        faces.sort_by(|a, b| {
-            by_x(
-                a.bounds.x + a.bounds.width / 2.0,
-                b.bounds.x + b.bounds.width / 2.0,
-            )
-        });
+        let pairs = Self::pair_regions_with_faces(faces, regions, size_of);
 
         let mut named = 0usize;
-        for (region, face) in regions.iter().zip(faces.iter()) {
+        for (region, face) in pairs.iter() {
             let name = region.name.trim();
             if name.is_empty() {
                 continue;
@@ -139,8 +153,110 @@ impl PhotoRecognizeFacesTask {
         named
     }
 
-    /// Match XMP person tags (already cached in the DB during enrich) to detected
-    /// faces. No file reads. Runs at most once per picture
+    /// Pair each named region with one detected face.
+    ///
+    /// A sidecar that Fotema wrote holds the full area of each region. The
+    /// function then pairs a region with the face that covers it best, and it
+    /// accepts a different number of regions and faces. This matters because
+    /// another computer can find a different number of faces in the same photo.
+    ///
+    /// A file from another program often holds only the horizontal centre. The
+    /// function then keeps the old, careful rule. It pairs the regions and the
+    /// faces from left to right, and only when there are as many of one as of
+    /// the other. When no detected face gives an area, the function also keeps
+    /// the old rule.
+    fn pair_regions_with_faces(
+        mut faces: Vec<DetectedFace>,
+        mut regions: Vec<photo::face_tags::FaceTag>,
+        size_of: &dyn Fn(&DetectedFace) -> Option<(f32, f32)>,
+    ) -> Vec<(photo::face_tags::FaceTag, DetectedFace)> {
+        /// A region and a face must cover each other by at least this much.
+        const MIN_OVERLAP: f32 = 0.3;
+
+        let with_area = regions.iter().all(|r| r.area.is_some());
+        let face_areas: Vec<Option<photo::face_tags::TagArea>> =
+            faces.iter().map(|f| Self::face_area(f, size_of)).collect();
+
+        if with_area && face_areas.iter().any(Option::is_some) {
+            let mut pairs = Vec::new();
+            let mut used = vec![false; faces.len()];
+
+            for region in &regions {
+                let Some(area) = region.area else { continue };
+
+                let mut best: Option<(usize, f32)> = None;
+                for i in 0..faces.len() {
+                    if used[i] {
+                        continue;
+                    }
+                    let Some(face_area) = face_areas[i] else {
+                        continue;
+                    };
+                    let overlap = area.iou(face_area);
+                    if overlap >= MIN_OVERLAP
+                        && best.is_none_or(|(_, best_overlap)| overlap > best_overlap)
+                    {
+                        best = Some((i, overlap));
+                    }
+                }
+
+                if let Some((i, _)) = best {
+                    used[i] = true;
+                    pairs.push((region.clone(), faces[i].clone()));
+                }
+            }
+
+            return pairs;
+        }
+
+        if regions.len() != faces.len() {
+            return Vec::new();
+        }
+
+        let by_x = |a: f32, b: f32| a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal);
+        regions.sort_by(|a, b| by_x(a.center_x, b.center_x));
+        faces.sort_by(|a, b| {
+            by_x(
+                a.bounds.x + a.bounds.width / 2.0,
+                b.bounds.x + b.bounds.width / 2.0,
+            )
+        });
+
+        regions.into_iter().zip(faces).collect()
+    }
+
+    /// The area of a detected face, normalized by the size of the image that the
+    /// detector looked at. The bounds of a face are in the pixels of that image.
+    fn face_area(
+        face: &DetectedFace,
+        size_of: &dyn Fn(&DetectedFace) -> Option<(f32, f32)>,
+    ) -> Option<photo::face_tags::TagArea> {
+        let (width, height) = size_of(face)?;
+        photo::face_tags::TagArea::from_pixel_bounds(
+            face.bounds.x,
+            face.bounds.y,
+            face.bounds.width,
+            face.bounds.height,
+            width,
+            height,
+        )
+    }
+
+    /// Build a function that gives the size of the image that the detector
+    /// looked at for a face of this picture. The image size is read only when
+    /// a region needs it, and only once.
+    fn detection_size_for(
+        &self,
+        path: &FlatpakPathBuf,
+        orientation: Option<Orientation>,
+    ) -> impl Fn(&DetectedFace) -> Option<(f32, f32)> + use<> {
+        let size = DetectionSize::new(&self.thumbnailer, path, orientation);
+        move |face: &DetectedFace| size.size_of(face.is_source_original)
+    }
+
+    /// Match named regions from the sidecar or the photo to the detected faces.
+    /// The function reads the sidecar first, so a name that another computer
+    /// wrote arrives here. Runs at most once per picture
     /// (`pictures.face_tags_imported`). Returns the number of faces named.
     fn import_face_tags(&self) -> Result<usize> {
         let groups = self.unnamed_faces_by_picture()?;
@@ -153,13 +269,15 @@ impl PhotoRecognizeFacesTask {
         let mut processed: Vec<PictureId> = Vec::with_capacity(groups.len());
         let mut imported = 0usize;
 
-        for (picture_id, _path, faces) in groups {
+        for (picture_id, path, orientation, faces) in groups {
             if self.stop.load(Ordering::Relaxed) {
                 break;
             }
             processed.push(picture_id);
-            let regions = self.photo_repo.find_face_tags(picture_id).unwrap_or_default();
-            imported += Self::assign_regions(faces, regions, &mut people_repo, &negatives);
+            let regions = photo::face_tags::read_face_tags(&path.sandbox_path);
+            let size_of = self.detection_size_for(&path, orientation);
+            imported +=
+                Self::assign_regions(faces, regions, &size_of, &mut people_repo, &negatives);
         }
 
         if !processed.is_empty() {
@@ -188,13 +306,20 @@ impl PhotoRecognizeFacesTask {
         let mut processed: Vec<PictureId> = Vec::with_capacity(groups.len());
         let mut imported = 0usize;
 
-        for (picture_id, path, faces) in groups {
+        for (picture_id, path, orientation, faces) in groups {
             if self.stop.load(Ordering::Relaxed) {
                 break;
             }
             processed.push(picture_id);
             let regions = photo::face_tags::read_face_tags(&path.sandbox_path);
-            imported += Self::assign_regions(faces, regions.clone(), &mut people_repo, &negatives);
+            let size_of = self.detection_size_for(&path, orientation);
+            imported += Self::assign_regions(
+                faces,
+                regions.clone(),
+                &size_of,
+                &mut people_repo,
+                &negatives,
+            );
             refreshed.push((picture_id, regions));
         }
 
@@ -258,28 +383,28 @@ impl PhotoRecognizeFacesTask {
             ));
 
             pool.install(|| {
-            need_embedding
-                .into_par_iter()
-                .take_any_while(|_| !self.stop.load(Ordering::Relaxed))
-                .for_each_init(
-                    || FaceEmbedder::new(&sface_path, &arcface_path).ok(),
-                    |embedder, face| {
-                        if let Some(emb) = embedder.as_mut() {
-                            match emb.embedding(&face) {
-                                Ok(embedding) => {
-                                    let _ = self
-                                        .repo
-                                        .store_face_embedding(face.face_id, &embedding);
+                need_embedding
+                    .into_par_iter()
+                    .take_any_while(|_| !self.stop.load(Ordering::Relaxed))
+                    .for_each_init(
+                        || FaceEmbedder::new(&sface_path, &arcface_path).ok(),
+                        |embedder, face| {
+                            if let Some(emb) = embedder.as_mut() {
+                                match emb.embedding(&face) {
+                                    Ok(embedding) => {
+                                        let _ = self
+                                            .repo
+                                            .store_face_embedding(face.face_id, &embedding);
+                                    }
+                                    Err(e) => error!(
+                                        "Failed computing embedding for face {}: {:?}",
+                                        face.face_id, e
+                                    ),
                                 }
-                                Err(e) => error!(
-                                    "Failed computing embedding for face {}: {:?}",
-                                    face.face_id, e
-                                ),
                             }
-                        }
-                        self.progress_monitor.emit(ProgressMonitorInput::Advance);
-                    },
-                );
+                            self.progress_monitor.emit(ProgressMonitorInput::Advance);
+                        },
+                    );
             });
 
             self.progress_monitor.emit(ProgressMonitorInput::Complete);
@@ -356,8 +481,10 @@ impl PhotoRecognizeFacesTask {
                     if rejected.is_some_and(|set| set.contains(&reference.person_id.id())) {
                         continue;
                     }
-                    let cos =
-                        people::Repository::cosine_normalized(&face.embedding, &reference.embedding);
+                    let cos = people::Repository::cosine_normalized(
+                        &face.embedding,
+                        &reference.embedding,
+                    );
                     if cos > best_cos {
                         best_cos = cos;
                         best_person = Some(reference.person_id);
@@ -370,7 +497,10 @@ impl PhotoRecognizeFacesTask {
         let count = assignments.len();
         let mut repo = self.repo.clone();
         for (face_id, person_id, score) in assignments {
-            info!("Face {} looks like person {} (score {:.3})", face_id, person_id, score);
+            info!(
+                "Face {} looks like person {} (score {:.3})",
+                face_id, person_id, score
+            );
             // Auto-recognised matches are unconfirmed — overridable by the user.
             if let Err(e) = repo.mark_as_person_unconfirmed(face_id, person_id, Some(score)) {
                 error!("Failed marking face {} as person: {:?}", face_id, e);
@@ -384,7 +514,10 @@ impl PhotoRecognizeFacesTask {
         person_ids.dedup();
         for id in person_ids {
             if let Err(e) = repo.mark_face_recognition_complete(PersonId::new(id)) {
-                error!("Failed marking recognition complete for person {}: {:?}", id, e);
+                error!(
+                    "Failed marking recognition complete for person {}: {:?}",
+                    id, e
+                );
             }
         }
 
@@ -407,12 +540,14 @@ impl Worker for PhotoRecognizeFacesTask {
         (stop, cache_dir, repo, photo_repo, progress_monitor): Self::Init,
         _sender: ComponentSender<Self>,
     ) -> Self {
+        let thumbnailer = Thumbnailer::build(&cache_dir.join("thumbnails"));
         PhotoRecognizeFacesTask {
             stop,
             cache_dir,
             repo,
             photo_repo,
             progress_monitor,
+            thumbnailer,
         }
     }
 

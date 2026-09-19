@@ -38,6 +38,10 @@
       <default>false</default>
       <summary>Extract videos from Android motion photos.</summary>
     </key>
+    <key name="write-face-tags" type="b">
+      <default>true</default>
+      <summary>Write confirmed person names to the XMP sidecar file of each photo, so a file sync tool can carry them to another computer.</summary>
+    </key>
     <key name="update-check-enabled" type="b">
       <default>true</default>
       <summary>Automatically check GitHub for a newer release on startup.</summary>

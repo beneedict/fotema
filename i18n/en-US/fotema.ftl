@@ -338,6 +338,11 @@ prefs-processing-face-detection = Face detection
 prefs-processing-recognition-auto = Automatic person recognition
   .subtitle = After you name a face, look through the library in the background for that person's other faces.
 
+# Preferences dialog switch for writing person names into the XMP sidecar file
+# of each photo, so a file sync tool can carry them to another computer.
+prefs-processing-write-face-tags = Save person names to photos
+    .subtitle = Writes the names you confirm into an XMP sidecar file next to each photo, so a file sync tool can carry them to your other computers. Other data in the sidecar file stays as it is.
+
 prefs-processing-motion-photos = Motion photos
   .subtitle = Detect Android motion photos and extract the videos.
 
@@ -422,6 +427,9 @@ banner-recognize-faces-photos = Recognizing people in photos. This will take a w
 
 # Index photos for smart search
 banner-clip-embed-photos = Indexing photos for search. This will take a while.
+
+# Banner shown while Fotema writes person names to the XMP sidecar files.
+banner-write-face-tags = Saving person names to photos.
 
 # Transcoding videos to a compatible format
 banner-convert-videos = Converting videos.

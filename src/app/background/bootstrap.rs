@@ -33,6 +33,7 @@ use anyhow;
 use super::{
     library_scan_task::{LibraryScanTask, LibraryScanTaskInput, LibraryScanTaskOutput},
     load_library_task::{LoadLibraryTask, LoadLibraryTaskInput, LoadLibraryTaskOutput},
+    face_tag_export_task::{FaceTagExportTask, FaceTagExportTaskInput, FaceTagExportTaskOutput},
     migrate_task::{MigrateTask, MigrateTaskInput, MigrateTaskOutput},
     person_thumbnail_task::{
         PersonThumbnailTask, PersonThumbnailTaskInput, PersonThumbnailTaskOutput,
@@ -95,6 +96,7 @@ pub enum TaskName {
     Transcode,
     Tidy,
     Migrate,
+    ExportFaceTags,
 }
 
 #[derive(Debug)]
@@ -124,6 +126,9 @@ pub enum BootstrapInput {
     /// Low-priority background pass after the user named a face: propagate the
     /// named person across the library from stored embeddings (no model/inference).
     RecognizeFacesNow,
+
+    /// Write the sidecars of the pictures whose names changed.
+    ExportFaceTags,
 
     /// Queue task for transcoding videos
     TranscodeAll,
@@ -193,6 +198,7 @@ pub struct Controllers {
 
     tidy_task: Arc<WorkerController<TidyTask>>,
     migrate_task: Arc<WorkerController<MigrateTask>>,
+    face_tag_export_task: Arc<WorkerController<FaceTagExportTask>>,
     person_thumbnail_task: Arc<WorkerController<PersonThumbnailTask>>,
 
     /// Pending ordered tasks to process
@@ -226,6 +232,7 @@ impl Controllers {
                 info!("Queueing task to scan picture {} for faces", picture_id);
                 self.add_task_photo_detect_faces_for_one(picture_id);
                 self.add_task_photo_recognize_faces();
+                self.add_task_face_tag_export();
                 self.run_if_idle();
             }
             BootstrapInput::ScanPicturesForFaces => {
@@ -242,6 +249,12 @@ impl Controllers {
             BootstrapInput::RecognizeFacesNow => {
                 info!("Queueing low-priority background face recognition");
                 self.add_task_photo_recognize_faces_now();
+                self.add_task_face_tag_export();
+                self.run_if_idle();
+            }
+            BootstrapInput::ExportFaceTags => {
+                info!("Queueing task to write face tag sidecars");
+                self.add_task_face_tag_export();
                 self.run_if_idle();
             }
             BootstrapInput::TranscodeAll => {
@@ -430,6 +443,16 @@ impl Controllers {
         self.enqueue(Box::new(move || {
             sender.emit(PhotoRecognizeFacesTaskInput::RescanFaceTags)
         }));
+    }
+
+    /// Write the confirmed person names of changed pictures to their sidecar
+    /// files.
+    fn add_task_face_tag_export(&mut self) {
+        let sender = self.face_tag_export_task.sender().clone();
+        let enable = self.settings_state.read().write_face_tags;
+        if enable {
+            self.enqueue(Box::new(move || sender.emit(FaceTagExportTaskInput::Start)));
+        }
     }
 
     fn add_task_person_thumbnails(&mut self) {
@@ -773,6 +796,19 @@ impl Bootstrap {
                 }
             });
 
+        let face_tag_export_task = FaceTagExportTask::builder()
+            .detach_worker((stop.clone(), photo_repo.clone(), thumbnailer.clone()))
+            .forward(sender.input_sender(), |msg| match msg {
+                FaceTagExportTaskOutput::Started => {
+                    BootstrapInput::TaskStarted(TaskName::ExportFaceTags)
+                }
+                // A sidecar changes on disk, but that changes nothing that the
+                // library shows, so no library_stale here.
+                FaceTagExportTaskOutput::Completed => {
+                    BootstrapInput::TaskCompleted(TaskName::ExportFaceTags, None)
+                }
+            });
+
         let person_thumbnailer = people::PersonThumbnailer::build(thumbnailer.clone(), &cache_dir);
 
         let person_thumbnail_task = PersonThumbnailTask::builder()
@@ -813,6 +849,7 @@ impl Bootstrap {
             video_transcode_task: Arc::new(video_transcode_task),
             tidy_task: Arc::new(tidy_task),
             migrate_task: Arc::new(migrate_task),
+            face_tag_export_task: Arc::new(face_tag_export_task),
             person_thumbnail_task: Arc::new(person_thumbnail_task),
             pending_tasks: Arc::new(Mutex::new(VecDeque::new())),
             is_running: false,
@@ -842,6 +879,7 @@ impl Bootstrap {
         controllers.add_task_photo_extract_motion();
         controllers.add_task_photo_detect_faces();
         controllers.add_task_photo_recognize_faces();
+        controllers.add_task_face_tag_export();
         controllers.add_task_photo_clip_embed();
 
         controllers.add_task_tidy();
