@@ -54,7 +54,7 @@ update the URL + `sha256` in `libonnxruntime-webgpu.json`:
 FOTEMA_ORT=webgpu-source build-aux/flatpak-build.sh
 
 # 2. Package it as <top>/lib/libonnxruntime.so* and publish as a release asset, e.g.
-gh release create onnxruntime-webgpu-1.24.4 onnxruntime-webgpu-linux-x64-1.24.4.tgz
+gh release create onnxruntime-webgpu-1.30.0 onnxruntime-webgpu-linux-x64-1.30.0.tgz
 
 # 3. Put the asset URL + sha256 into libonnxruntime-webgpu.json
 ```

@@ -18,15 +18,16 @@
         {
             "type": "git",
             "url": "https://github.com/microsoft/onnxruntime.git",
-            "commit": "2d924974ef147392ced8409d36bd6d2e7fcc8a74"
+            "commit": "f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7",
+            "tag": "v1.30.0"
         },
         {
             "type": "archive",
             "only-arches": [
                 "x86_64"
             ],
-            "url": "https://nodejs.org/dist/v20.18.0/node-v20.18.0-linux-x64.tar.xz",
-            "sha256": "4543670b589593f8fa5f106111fd5139081da42bb165a9239f05195e405f240a",
+            "url": "https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.xz",
+            "sha256": "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307",
             "dest": "node-dist"
         },
         {
@@ -34,8 +35,8 @@
             "only-arches": [
                 "aarch64"
             ],
-            "url": "https://nodejs.org/dist/v20.18.0/node-v20.18.0-linux-arm64.tar.xz",
-            "sha256": "a9ce85675ba33f00527f6234d90000946c0936fb4fca605f1891bb5f4fe6fb0a",
+            "url": "https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-arm64.tar.xz",
+            "sha256": "fff4078c5def658577f92c88db7db3bc0072924bfb93fe52c1e744a54e94abb8",
             "dest": "node-dist"
         }
     ]
