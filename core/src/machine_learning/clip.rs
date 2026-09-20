@@ -14,8 +14,6 @@
 // the Flatpak and located via `ORT_DYLIB_PATH` (set up in `src/main.rs`), so we
 // build `ort` with `load-dynamic` and never link a second copy.
 
-use std::fs::File;
-use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
@@ -25,25 +23,42 @@ use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::value::Tensor;
 
-use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
+use crate::machine_learning::model_download::{ModelFile, ensure_model};
 use tokenizers::Tokenizer;
-use tracing::info;
 
 /// Model identifier stored alongside each embedding in the DB. If the model ever
 /// changes, bumping this string invalidates old embeddings (they get recomputed),
 /// the same trick the ArcFace migration uses with the embedding byte length.
 pub const MODEL_NAME: &str = "nllb-clip-base-siglip-v1";
 
-const HF_BASE: &str =
-    "https://huggingface.co/immich-app/nllb-clip-base-siglip__v1/resolve/main";
+// Source repository of the split ONNX export.
+const HF_BASE: &str = "https://huggingface.co/immich-app/nllb-clip-base-siglip__v1/resolve/main";
 
-const VISUAL_URL: &str = "https://huggingface.co/immich-app/nllb-clip-base-siglip__v1/resolve/main/visual/model.onnx";
+// Each model file carries its expected size and SHA-256. The values come from
+// the HuggingFace headers `x-linked-size` and `x-linked-etag` of the revision
+// `main` on 2026-09-20. If you change a URL, update size and hash together.
+const VISUAL_MODEL: ModelFile = ModelFile {
+    url: "https://huggingface.co/immich-app/nllb-clip-base-siglip__v1/resolve/main/visual/model.onnx",
+    sha256: "328b3ee2a1405f0c62d500e8223a4d2d6ae1d598c675c2b85fda0676a130557b",
+    size: 372_841_652,
+    description: "CLIP image encoder (~0.4GB)",
+};
 const VISUAL_FILE: &str = "clip_visual.onnx";
 
-const TEXTUAL_URL: &str = "https://huggingface.co/immich-app/nllb-clip-base-siglip__v1/resolve/main/textual/model.onnx";
+const TEXTUAL_MODEL: ModelFile = ModelFile {
+    url: "https://huggingface.co/immich-app/nllb-clip-base-siglip__v1/resolve/main/textual/model.onnx",
+    sha256: "25120b71f8fdf1beec94eedb4a73cce50bfbbdf94f8f957b0066f3f89ec3c5f5",
+    size: 1_661_525_370,
+    description: "CLIP text encoder",
+};
 const TEXTUAL_FILE: &str = "clip_textual.onnx";
 
-const TOKENIZER_URL: &str = "https://huggingface.co/immich-app/nllb-clip-base-siglip__v1/resolve/main/textual/tokenizer.json";
+const TOKENIZER_MODEL: ModelFile = ModelFile {
+    url: "https://huggingface.co/immich-app/nllb-clip-base-siglip__v1/resolve/main/textual/tokenizer.json",
+    sha256: "b3be18cc91c94d4a1d83731ace4dac0b90a7db024edecdeb9fe7d19ec01ce901",
+    size: 32_240_136,
+    description: "CLIP tokenizer",
+};
 const TOKENIZER_FILE: &str = "clip_tokenizer.json";
 
 /// SigLIP image preprocessing constants. The image tower of this model expects
@@ -73,7 +88,7 @@ pub fn ensure_visual_model(cache_dir: &Path) -> Result<PathBuf> {
     let _ = HF_BASE; // documents the source repo
     let base = models_dir(cache_dir)?;
     let visual = base.join(VISUAL_FILE);
-    download_model(VISUAL_URL, &visual, "CLIP image encoder (~0.4GB)")?;
+    ensure_model(&VISUAL_MODEL, &visual)?;
     Ok(visual)
 }
 
@@ -82,9 +97,9 @@ pub fn ensure_visual_model(cache_dir: &Path) -> Result<PathBuf> {
 pub fn ensure_text_model(cache_dir: &Path) -> Result<(PathBuf, PathBuf)> {
     let base = models_dir(cache_dir)?;
     let textual = base.join(TEXTUAL_FILE);
-    download_model(TEXTUAL_URL, &textual, "CLIP text encoder")?;
+    ensure_model(&TEXTUAL_MODEL, &textual)?;
     let tokenizer = base.join(TOKENIZER_FILE);
-    download_model(TOKENIZER_URL, &tokenizer, "CLIP tokenizer")?;
+    ensure_model(&TOKENIZER_MODEL, &tokenizer)?;
     Ok((textual, tokenizer))
 }
 
@@ -253,43 +268,4 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
         return -1.0;
     }
     a.iter().zip(b).map(|(x, y)| x * y).sum()
-}
-
-/// Download a model file if it isn't already present. Mirrors the helper in
-/// `face_recognizer.rs` (atomic via a temp file + rename).
-fn download_model(url: &str, destination: &Path, description: &str) -> Result<()> {
-    if destination.exists() {
-        return Ok(());
-    }
-
-    info!("Downloading CLIP model ({}) from {}", description, url);
-
-    let headers = {
-        let mut headers = HeaderMap::new();
-        headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
-        headers
-    };
-
-    let client = reqwest::blocking::Client::new();
-    let mut response = client.get(url).headers(headers).send()?;
-
-    if response.status().is_success() {
-        let tmp_path = destination.with_extension("tmp");
-        let tmp_file = File::create(&tmp_path)?;
-        let mut writer = BufWriter::new(tmp_file);
-        while let Ok(bytes_read) = response.copy_to(&mut writer) {
-            if bytes_read == 0 {
-                break;
-            }
-        }
-        info!("CLIP model ({}) downloaded.", description);
-        std::fs::rename(tmp_path, destination)?;
-        Ok(())
-    } else {
-        Err(anyhow!(
-            "Failed to download CLIP model ({}): {}",
-            description,
-            response.status()
-        ))
-    }
 }

@@ -10,8 +10,6 @@
 // what ArcFace expects); only the embedding network changed.
 
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::BufWriter;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -22,7 +20,7 @@ use opencv::imgcodecs;
 use opencv::objdetect::FaceRecognizerSF;
 use opencv::prelude::*;
 
-use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
+use crate::machine_learning::model_download::{ModelFile, ensure_model};
 
 use tracing::{info, warn};
 
@@ -33,11 +31,24 @@ use crate::people::model::{DetectedFace, PersonForRecognition, PersonId};
 /// from an older 128-d SFace one, so old embeddings are recomputed.
 pub const EMBEDDING_DIM: usize = 512;
 
-const SFACE_URL: &str = "https://github.com/blissd/fotema-opencv_zoo/raw/fotema-1.0/models/face_recognition_sface/face_recognition_sface_2021dec.onnx";
+// Each model file carries its expected size and SHA-256. The SFace values come
+// from the file in the GitHub repository, the ArcFace values from the
+// HuggingFace headers `x-linked-size` and `x-linked-etag` (revision `main`,
+// 2026-09-20). If you change a URL, update size and hash together.
+const SFACE_MODEL: ModelFile = ModelFile {
+    url: "https://github.com/blissd/fotema-opencv_zoo/raw/fotema-1.0/models/face_recognition_sface/face_recognition_sface_2021dec.onnx",
+    sha256: "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+    size: 38_696_353,
+    description: "SFace alignment model (~40MB)",
+};
 const SFACE_FILE: &str = "face_recognition_sface_2021dec.onnx";
 
-const ARCFACE_URL: &str =
-    "https://huggingface.co/immich-app/buffalo_l/resolve/main/recognition/model.onnx";
+const ARCFACE_MODEL: ModelFile = ModelFile {
+    url: "https://huggingface.co/immich-app/buffalo_l/resolve/main/recognition/model.onnx",
+    sha256: "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43",
+    size: 174_383_860,
+    description: "ArcFace r50 model (~166MB)",
+};
 const ARCFACE_FILE: &str = "face_recognition_arcface_r50.onnx";
 
 /// Per-thread face embedder: an SFace recognizer used only for landmark-based
@@ -68,7 +79,8 @@ impl FaceEmbedder {
         // Align to the canonical 112x112 using the 5 landmarks.
         let landmarks = face.landmarks_as_mat();
         let mut aligned = Mat::default();
-        self.aligner.align_crop(&face_img, &landmarks, &mut aligned)?;
+        self.aligner
+            .align_crop(&face_img, &landmarks, &mut aligned)?;
 
         // ArcFace preprocessing: (pixel - 127.5) / 127.5, RGB, 112x112.
         let blob = opencv::dnn::blob_from_image(
@@ -158,10 +170,10 @@ impl FaceRecognizer {
         std::fs::create_dir_all(&base_path)?;
 
         let sface = base_path.join(SFACE_FILE);
-        download_model(SFACE_URL, &sface, "SFace alignment model (~40MB)")?;
+        ensure_model(&SFACE_MODEL, &sface)?;
 
         let arcface = base_path.join(ARCFACE_FILE);
-        download_model(ARCFACE_URL, &arcface, "ArcFace r50 model (~166MB)")?;
+        ensure_model(&ARCFACE_MODEL, &arcface)?;
 
         Ok((sface, arcface))
     }
@@ -256,41 +268,4 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
         return -1.0;
     }
     a.iter().zip(b).map(|(x, y)| x * y).sum()
-}
-
-fn download_model(url: &str, destination: &Path, description: &str) -> Result<()> {
-    if destination.exists() {
-        return Ok(());
-    }
-
-    info!("Downloading face recognition model ({}) from {}", description, url);
-
-    let headers = {
-        let mut headers = HeaderMap::new();
-        headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
-        headers
-    };
-
-    let client = reqwest::blocking::Client::new();
-    let mut response = client.get(url).headers(headers).send()?;
-
-    if response.status().is_success() {
-        let tmp_path = destination.with_extension("tmp");
-        let tmp_file = File::create(&tmp_path)?;
-        let mut writer = BufWriter::new(tmp_file);
-        while let Ok(bytes_read) = response.copy_to(&mut writer) {
-            if bytes_read == 0 {
-                break;
-            }
-        }
-        info!("Face recognition model ({}) downloaded.", description);
-        std::fs::rename(tmp_path, destination)?;
-        Ok(())
-    } else {
-        Err(anyhow!(
-            "Failed to download face recognition model ({}): {}",
-            description,
-            response.status()
-        ))
-    }
 }

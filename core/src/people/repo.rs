@@ -15,13 +15,13 @@ use crate::people::model::PersonForRecognition;
 use crate::people::model::Rect;
 
 use anyhow::*;
+use chrono::{DateTime, Utc};
 use rusqlite;
 use rusqlite::Row;
 use rusqlite::params;
 use std::path::{Path, PathBuf};
 use std::result::Result::Ok;
 use std::sync::{Arc, Mutex};
-use chrono::{DateTime, Utc};
 use tracing::warn;
 
 /// A confirmed, named reference face together with its stored ArcFace embedding
@@ -155,20 +155,20 @@ impl Repository {
     pub fn find_unnamed_faces(&self) -> Result<Vec<model::Face>> {
         let rows: Vec<(model::Face, Option<Vec<f32>>)> = {
             let con = self.con.lock().unwrap();
-            let mut stmt = con.prepare(&format!(
+            let mut stmt = con.prepare(
                 "SELECT
                     faces.face_id AS face_id,
                     faces.thumbnail_path AS face_thumbnail_path,
                     faces.embedding AS embedding
                 FROM pictures_faces AS faces
                 WHERE faces.person_id IS NULL AND faces.is_ignored = FALSE
-                    AND faces.bounds_width >= {MIN_FACE_PX}
-                    AND faces.bounds_height >= {MIN_FACE_PX}
-                ORDER BY faces.face_id"
-            ))?;
+                    AND faces.bounds_width >= ?1
+                    AND faces.bounds_height >= ?2
+                ORDER BY faces.face_id",
+            )?;
 
             let data_dir = self.data_dir_base_path.clone();
-            stmt.query_map([], move |row| {
+            stmt.query_map([MIN_FACE_PX, MIN_FACE_PX], move |row| {
                 let face_id = row.get("face_id").map(FaceId::new)?;
                 let thumbnail_path = row
                     .get("face_thumbnail_path")
@@ -179,7 +179,13 @@ impl Repository {
                         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
                         .collect::<Vec<f32>>()
                 });
-                Ok((model::Face { face_id, thumbnail_path }, embedding))
+                Ok((
+                    model::Face {
+                        face_id,
+                        thumbnail_path,
+                    },
+                    embedding,
+                ))
             })?
             .flatten()
             .collect()
@@ -297,9 +303,8 @@ impl Repository {
         // Only count embeddings of the current model's dimension (512 floats =
         // 2048 bytes). Older 128-d SFace embeddings are ignored so they get
         // recomputed with the new ArcFace model.
-        let mut stmt = con.prepare(
-            "SELECT face_id FROM pictures_faces WHERE length(embedding) = 2048",
-        )?;
+        let mut stmt =
+            con.prepare("SELECT face_id FROM pictures_faces WHERE length(embedding) = 2048")?;
         let set = stmt
             .query_map([], |row| row.get::<_, i64>("face_id"))?
             .flatten()
@@ -415,19 +420,19 @@ impl Repository {
     }
 
     pub fn all_people(&self) -> Result<Vec<model::Person>> {
-        self.people_where("p.is_ignored = FALSE")
+        self.people_by_ignored(false)
     }
 
     /// People the user has hidden (for the "show ignored people" view, from which
     /// they can be restored). Their data and face assignments are untouched.
     pub fn all_ignored_people(&self) -> Result<Vec<model::Person>> {
-        self.people_where("p.is_ignored = TRUE")
+        self.people_by_ignored(true)
     }
 
-    /// Shared people query, filtered by the given (trusted, literal) predicate.
-    fn people_where(&self, predicate: &str) -> Result<Vec<model::Person>> {
+    /// Shared people query, filtered by whether the person is ignored.
+    fn people_by_ignored(&self, is_ignored: bool) -> Result<Vec<model::Person>> {
         let con = self.con.lock().unwrap();
-        let mut stmt = con.prepare(&format!(
+        let mut stmt = con.prepare(
             "SELECT
                 p.person_id AS person_id,
                 p.name AS person_name,
@@ -436,12 +441,12 @@ impl Repository {
             FROM people AS p
             LEFT OUTER JOIN pictures_faces AS f
                 ON (f.person_id = p.person_id AND f.is_thumbnail = TRUE)
-            WHERE {predicate}
-            ORDER BY name ASC"
-        ))?;
+            WHERE p.is_ignored = ?1
+            ORDER BY name ASC",
+        )?;
 
         let result: Vec<model::Person> = stmt
-            .query_map([], |row| self.to_person(row))?
+            .query_map([is_ignored], |row| self.to_person(row))?
             .flatten()
             .collect();
 
@@ -468,8 +473,9 @@ impl Repository {
     /// importing names from photo metadata so duplicates aren't created.
     pub fn find_person_id_by_name(&self, name: &str) -> Result<Option<PersonId>> {
         let con = self.con.lock().unwrap();
-        let mut stmt =
-            con.prepare_cached("SELECT person_id FROM people WHERE name = ?1 COLLATE NOCASE LIMIT 1")?;
+        let mut stmt = con.prepare_cached(
+            "SELECT person_id FROM people WHERE name = ?1 COLLATE NOCASE LIMIT 1",
+        )?;
         let mut rows = stmt.query_map(params![name], |row| row.get::<_, i64>(0))?;
         let id = rows.next().transpose()?;
         Ok(id.map(PersonId::new))
@@ -519,8 +525,9 @@ impl Repository {
             let con = self.con.lock().unwrap();
             let mut stmt =
                 con.prepare("SELECT embedding FROM pictures_faces WHERE face_id = ?1")?;
-            let mut rows =
-                stmt.query_map(params![face_id.id()], |row| row.get::<_, Option<Vec<u8>>>(0))?;
+            let mut rows = stmt.query_map(params![face_id.id()], |row| {
+                row.get::<_, Option<Vec<u8>>>(0)
+            })?;
             rows.next()
                 .transpose()?
                 .flatten()
@@ -618,16 +625,16 @@ impl Repository {
     /// embedding, with their detection time. The recognition candidates.
     pub fn find_unnamed_with_embeddings(&self) -> Result<Vec<UnnamedEmbedding>> {
         let con = self.con.lock().unwrap();
-        let mut stmt = con.prepare(&format!(
+        let mut stmt = con.prepare(
             "SELECT face_id, detected_at, embedding
              FROM pictures_faces
              WHERE person_id IS NULL
                AND is_ignored = FALSE
-               AND bounds_width >= {MIN_FACE_PX}
-               AND bounds_height >= {MIN_FACE_PX}
-               AND length(embedding) = 2048"
-        ))?;
-        let rows = stmt.query_map([], |row| {
+               AND bounds_width >= ?1
+               AND bounds_height >= ?2
+               AND length(embedding) = 2048",
+        )?;
+        let rows = stmt.query_map([MIN_FACE_PX, MIN_FACE_PX], |row| {
             let face_id = row.get("face_id").map(FaceId::new)?;
             let detected_at: DateTime<Utc> = row.get("detected_at")?;
             let bytes: Vec<u8> = row.get("embedding")?;
@@ -1234,9 +1241,7 @@ impl Repository {
     ) -> Result<std::collections::HashMap<i64, std::collections::HashSet<i64>>> {
         let con = self.con.lock().unwrap();
         let mut stmt = con.prepare("SELECT face_id, person_id FROM face_not_person")?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
-        })?;
+        let rows = stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
         let mut map: std::collections::HashMap<i64, std::collections::HashSet<i64>> =
             std::collections::HashMap::new();
         for (face_id, person_id) in rows.flatten() {

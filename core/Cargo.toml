@@ -36,6 +36,9 @@ reqwest = { version = "0.13.4", features = ["blocking"] }
 futures = "0.3.32"
 url = "2.5.7"
 md5 = "0.8.0"
+# The model downloader checks each downloaded model file with SHA-256. Thus a
+# truncated or corrupt file never stays in the cache.
+sha2 = "0.10.9"
 thiserror = "2.0.18"
 byteorder = "1.5.0"
 video-rs = {version = "0.11", features = ["ndarray"]}

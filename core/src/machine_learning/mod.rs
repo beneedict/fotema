@@ -6,5 +6,6 @@
 pub mod clip;
 pub mod face_extractor;
 pub mod face_recognizer;
+pub mod model_download;
 pub mod nms;
 //pub mod yolov8;
