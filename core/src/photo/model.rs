@@ -117,7 +117,10 @@ impl Orientation {
     pub fn swaps_sides(self) -> bool {
         matches!(
             self,
-            Orientation::WestMirrored | Orientation::West | Orientation::EastMirrored | Orientation::East
+            Orientation::WestMirrored
+                | Orientation::West
+                | Orientation::EastMirrored
+                | Orientation::East
         )
     }
 

@@ -78,7 +78,9 @@ pub fn from_path_with_face_tags(
     // Bounds I/O for photos with no people tags; EXIF/XMP sit well within this.
     const HEADER_CAP: u64 = 512 * 1024;
     let mut bytes = Vec::new();
-    fs::File::open(path)?.take(HEADER_CAP).read_to_end(&mut bytes)?;
+    fs::File::open(path)?
+        .take(HEADER_CAP)
+        .read_to_end(&mut bytes)?;
 
     let mut metadata = match exif::Reader::new()
         .read_from_container(&mut std::io::Cursor::new(bytes.as_slice()))

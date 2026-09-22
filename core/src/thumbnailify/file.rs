@@ -242,7 +242,10 @@ pub fn migrate_legacy_png_thumbnails(thumbnails_base_dir: &Path) -> MigrationSta
 
     // A failure marker is a 1x1 sentinel. To encode it again gives no result.
     // Thus the function writes a new marker in its place.
-    stats.merge(migrate_dir(&failed_thumbnail_dir(thumbnails_base_dir), true));
+    stats.merge(migrate_dir(
+        &failed_thumbnail_dir(thumbnails_base_dir),
+        true,
+    ));
 
     if stats.total_removed() > 0 || stats.failed > 0 {
         info!(

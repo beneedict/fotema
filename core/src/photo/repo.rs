@@ -518,7 +518,9 @@ impl Repository {
         let result: Vec<(PictureId, FlatpakPathBuf, Option<Orientation>, DetectedFace)> = stmt
             .query_map([], |row| {
                 let picture_id = row.get("picture_id").map(PictureId::new)?;
-                let orientation = row.get::<_, Option<u32>>("orientation")?.map(Orientation::from);
+                let orientation = row
+                    .get::<_, Option<u32>>("orientation")?
+                    .map(Orientation::from);
                 Ok((
                     picture_id,
                     self.to_library_path(row)?,
@@ -564,8 +566,9 @@ impl Repository {
         picture_id: PictureId,
     ) -> Result<Vec<crate::photo::face_tags::FaceTag>> {
         let con = self.con.lock().unwrap();
-        let mut stmt = con
-            .prepare_cached("SELECT name, center_x FROM pictures_face_tags WHERE picture_id = ?1")?;
+        let mut stmt = con.prepare_cached(
+            "SELECT name, center_x FROM pictures_face_tags WHERE picture_id = ?1",
+        )?;
         let rows = stmt.query_map(params![picture_id.id()], |row| {
             Ok(crate::photo::face_tags::FaceTag {
                 name: row.get(0)?,
@@ -697,8 +700,9 @@ impl Repository {
         let mut con = self.con.lock().unwrap();
         let tx = con.transaction()?;
         {
-            let mut stmt =
-                tx.prepare_cached("UPDATE pictures SET face_tags_imported = 1 WHERE picture_id = ?1")?;
+            let mut stmt = tx.prepare_cached(
+                "UPDATE pictures SET face_tags_imported = 1 WHERE picture_id = ?1",
+            )?;
             for id in picture_ids {
                 stmt.execute(params![id.id()])?;
             }

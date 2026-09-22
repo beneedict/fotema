@@ -160,10 +160,8 @@ impl PersonThumbnailer {
             error!("Failed to save face thumbnail: {:?}", large_thumbnail_path);
             err
         })?;
-        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
-            std::io::BufWriter::new(file),
-            90,
-        );
+        let mut encoder =
+            image::codecs::jpeg::JpegEncoder::new_with_quality(std::io::BufWriter::new(file), 90);
         encoder
             .encode(
                 rgb.as_raw(),
@@ -172,7 +170,10 @@ impl PersonThumbnailer {
                 image::ExtendedColorType::Rgb8,
             )
             .map_err(|err| {
-                error!("Failed to encode face thumbnail: {:?}", large_thumbnail_path);
+                error!(
+                    "Failed to encode face thumbnail: {:?}",
+                    large_thumbnail_path
+                );
                 err
             })?;
 

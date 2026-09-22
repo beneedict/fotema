@@ -286,8 +286,11 @@ impl FaceExtractor {
 
     /// Computes the centre of a face.
     fn centre(f: &DetectedFace) -> (f32, f32) {
-        if let Some((right_eye, left_eye)) =
-            f.landmarks.as_ref().filter(|l| l.len() >= 2).map(|l| (l[0], l[1]))
+        if let Some((right_eye, left_eye)) = f
+            .landmarks
+            .as_ref()
+            .filter(|l| l.len() >= 2)
+            .map(|l| (l[0], l[1]))
         {
             // If we have landmarks, then the first two are the right and left eyes.
             // Use the midpoint between the eyes as the centre of the thumbnail.
