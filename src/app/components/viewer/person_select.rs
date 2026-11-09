@@ -261,7 +261,11 @@ impl SimpleAsyncComponent for PersonSelect {
                     .all_names
                     .iter()
                     .find(|n| n.to_lowercase().starts_with(&query))
-                    .or_else(|| self.all_names.iter().find(|n| n.to_lowercase().contains(&query)));
+                    .or_else(|| {
+                        self.all_names
+                            .iter()
+                            .find(|n| n.to_lowercase().contains(&query))
+                    });
                 if let Some(name) = best {
                     self.face_name.set_text(name);
                     self.face_name.set_position(-1);

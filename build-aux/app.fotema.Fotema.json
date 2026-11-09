@@ -1,11 +1,31 @@
 {
-    "id": "app.fotema.Fotema",
-    "runtime": "org.gnome.Platform",
-    "runtime-version": "51",
-    "sdk": "org.gnome.Sdk",
-    "sdk-extensions": [
-        "org.freedesktop.Sdk.Extension.rust-stable",
-        "org.freedesktop.Sdk.Extension.llvm22"
+    "build-options": {
+        "append-path": "/usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm22/bin",
+        "build-args": [
+            "--share=network"
+        ],
+        "env": {
+            "AWS_LC_SYS_NO_JITTER_ENTROPY": "1",
+            "CARGO_REGISTRIES_CRATES_IO_PROTOCOL": "sparse",
+            "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER": "clang",
+            "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS": "-C link-arg=-fuse-ld=/usr/lib/sdk/rust-stable/bin/mold",
+            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER": "clang",
+            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS": "-C link-arg=-fuse-ld=/usr/lib/sdk/rust-stable/bin/mold"
+        },
+        "prepend-ld-library-path": "/usr/lib/sdk/llvm22/lib",
+        "test-args": [
+            "--socket=x11",
+            "--share=network"
+        ]
+    },
+    "cleanup": [
+        "/include",
+        "/lib/cmake",
+        "/lib/girepository-1.0",
+        "/lib/pkgconfig",
+        "/share/gir-1.0",
+        "*.la",
+        "*.a"
     ],
     "command": "fotema",
     "finish-args": [
@@ -18,52 +38,29 @@
         "--env=RUSTICL_ENABLE=iris,radeonsi",
         "--env=OCL_ICD_VENDORS=/usr/lib/x86_64-linux-gnu/GL/default/lib/OpenCL/vendors"
     ],
-    "build-options": {
-        "append-path": "/usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm22/bin",
-        "prepend-ld-library-path": "/usr/lib/sdk/llvm22/lib",
-        "build-args": ["--share=network"],
-        "env": {
-            "CARGO_REGISTRIES_CRATES_IO_PROTOCOL": "sparse",
-            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER": "clang",
-            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS": "-C link-arg=-fuse-ld=/usr/lib/sdk/rust-stable/bin/mold",
-            "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER": "clang",
-            "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS": "-C link-arg=-fuse-ld=/usr/lib/sdk/rust-stable/bin/mold",
-            "AWS_LC_SYS_NO_JITTER_ENTROPY": "1"
-        },
-        "test-args": ["--socket=x11", "--share=network"]
-    },
-
-    "cleanup": [
-        "/include",
-        "/lib/cmake",
-        "/lib/girepository-1.0",
-        "/lib/pkgconfig",
-        "/share/gir-1.0",
-        "*.la",
-        "*.a"
-    ],
+    "id": "app.fotema.Fotema",
     "modules": [
         "modules/libshumate.json",
         "modules/opencv.json",
         "modules/libonnxruntime.json",
         {
-            "name": "fotema",
-            "buildsystem": "meson",
-            "run-tests": true,
-
             "build-options": {
                 "append-path": "/usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm22/bin",
-                "prepend-ld-library-path": "/usr/lib/sdk/llvm22/lib",
                 "env": {
-                    "OPENCV_INCLUDE_PATHS": "/app/include/opencv5",
                     "LIBCLANG_PATH": "/usr/lib/sdk/llvm22/lib",
+                    "OPENCV_INCLUDE_PATHS": "/app/include/opencv5",
                     "ORT_STRATEGY": "system"
-                }
+                },
+                "prepend-ld-library-path": "/usr/lib/sdk/llvm22/lib"
             },
-            "config-opts": ["-Dprofile=default"],
+            "buildsystem": "meson",
+            "config-opts": [
+                "-Dprofile=default"
+            ],
+            "name": "fotema",
+            "run-tests": true,
             "sources": [
                 {
-                    "type": "dir",
                     "path": "../",
                     "skip": [
                         "target",
@@ -75,9 +72,17 @@
                         ".vscode",
                         "_build",
                         "builddir"
-                    ]
+                    ],
+                    "type": "dir"
                 }
             ]
         }
+    ],
+    "runtime": "org.gnome.Platform",
+    "runtime-version": "51",
+    "sdk": "org.gnome.Sdk",
+    "sdk-extensions": [
+        "org.freedesktop.Sdk.Extension.rust-stable",
+        "org.freedesktop.Sdk.Extension.llvm22"
     ]
 }

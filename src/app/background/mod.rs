@@ -11,13 +11,13 @@ pub mod load_library_task;
 
 pub mod person_thumbnail_task;
 
+pub mod face_tag_export_task;
 pub mod photo_clean_task;
 pub mod photo_clip_embed_task;
 pub mod photo_detect_faces_task;
 pub mod photo_enrich_task;
 pub mod photo_extract_motion_task;
 pub mod photo_recognize_faces_task;
-pub mod face_tag_export_task;
 pub mod photo_thumbnail_task;
 
 pub mod video_clean_task;

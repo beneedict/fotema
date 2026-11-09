@@ -398,7 +398,11 @@ pub(super) enum AppMsg {
 relm4::new_action_group!(pub(super) WindowActionGroup, "win");
 relm4::new_stateless_action!(PreferencesAction, WindowActionGroup, "preferences");
 relm4::new_stateless_action!(AboutAction, WindowActionGroup, "about");
-relm4::new_stateless_action!(CheckForUpdatesAction, WindowActionGroup, "check-for-updates");
+relm4::new_stateless_action!(
+    CheckForUpdatesAction,
+    WindowActionGroup,
+    "check-for-updates"
+);
 relm4::new_stateless_action!(ScanFaceTagsAction, WindowActionGroup, "scan-face-tags");
 
 #[relm4::component(pub async)]
@@ -1132,18 +1136,17 @@ impl SimpleAsyncComponent for App {
                     .identifier(identifier)
                     .modal(true)
                     .multiple(false);
-                let dest: Option<PathBuf> =
-                    match request.send().await.and_then(|r| r.response()) {
-                        std::result::Result::Ok(files) => files.uris().first().and_then(|uri| {
-                            glib::Uri::parse(uri.as_str(), glib::UriFlags::NONE)
-                                .map(|u| PathBuf::from(u.path()))
-                                .ok()
-                        }),
-                        Err(e) => {
-                            error!("Export folder chooser failed: {e}");
-                            None
-                        }
-                    };
+                let dest: Option<PathBuf> = match request.send().await.and_then(|r| r.response()) {
+                    std::result::Result::Ok(files) => files.uris().first().and_then(|uri| {
+                        glib::Uri::parse(uri.as_str(), glib::UriFlags::NONE)
+                            .map(|u| PathBuf::from(u.path()))
+                            .ok()
+                    }),
+                    Err(e) => {
+                        error!("Export folder chooser failed: {e}");
+                        None
+                    }
+                };
                 let Some(dest) = dest else {
                     return;
                 };

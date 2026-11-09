@@ -3,12 +3,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use gtk::prelude::OrientableExt;
+use relm4::RelmObjectExt;
 use relm4::adw::{self, prelude::*};
 use relm4::binding::*;
 use relm4::gtk::{self, gdk};
 use relm4::prelude::*;
 use relm4::typed_view::grid::{RelmGridItem, TypedGridView};
-use relm4::RelmObjectExt;
 
 use crate::adaptive;
 use crate::app::SettingsState;

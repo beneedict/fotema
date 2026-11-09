@@ -256,12 +256,11 @@ impl SimpleComponent for PersonAlbum {
 
         let title = gtk::Label::builder().build();
 
-        let person_select = PersonSelect::builder().launch((repo.clone(), false)).forward(
-            sender.input_sender(),
-            |msg| match msg {
+        let person_select = PersonSelect::builder()
+            .launch((repo.clone(), false))
+            .forward(sender.input_sender(), |msg| match msg {
                 PersonSelectOutput::Done => PersonAlbumInput::ReassignDone,
-            },
-        );
+            });
 
         let person_dialog = adw::Dialog::builder()
             .child(person_select.widget())
@@ -287,9 +286,7 @@ impl SimpleComponent for PersonAlbum {
         let menu_active = make_menu(ignore_label.as_str());
         let menu_ignored = make_menu(restore_label.as_str());
 
-        let menu_button = gtk::MenuButton::builder()
-            .menu_model(&menu_active)
-            .build();
+        let menu_button = gtk::MenuButton::builder().menu_model(&menu_active).build();
 
         let review_dropdown = gtk::DropDown::builder().build();
 
@@ -487,7 +484,10 @@ impl SimpleComponent for PersonAlbum {
                 let Some(face) = self.face_in_picture(&picture_id) else {
                     return;
                 };
-                if let Err(e) = self.repo.set_person_thumbnail(person.person_id, face.face_id) {
+                if let Err(e) = self
+                    .repo
+                    .set_person_thumbnail(person.person_id, face.face_id)
+                {
                     error!("Failed setting person thumbnail: {}", e);
                     return;
                 }
@@ -850,9 +850,11 @@ impl PersonAlbum {
             return;
         }
         self.picture_ids = new_ids;
-        self.album.sender().emit(AlbumInput::Filter(AlbumFilter::Any(
-            self.picture_ids.clone(),
-        )));
+        self.album
+            .sender()
+            .emit(AlbumInput::Filter(AlbumFilter::Any(
+                self.picture_ids.clone(),
+            )));
         self.album.sender().emit(AlbumInput::ScrollToTop);
     }
 

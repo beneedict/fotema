@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: © 2026 Benedikt Nimmervoll
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
 # Build the release Flatpak (app.fotema.Fotema), keeping the upstream Fotema
 # version and appending an incrementing build suffix (-01, -02, ...) so each
 # build is uniquely identifiable. The suffix is applied only for the build; the

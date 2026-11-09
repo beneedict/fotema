@@ -1,6 +1,9 @@
 {
-    "name": "libonnxruntime",
-    "buildsystem": "simple",
+    "build-commands": [
+        "bash -euxc 'export PATH=$PWD/node-dist/bin:$PATH; python3 tools/ci_build/build.py --build_dir build/webgpu --config Release --build_shared_lib --use_webgpu --skip_tests --parallel 3 --compile_no_warning_as_error --cmake_extra_defines CMAKE_POLICY_VERSION_MINIMUM=3.5 onnxruntime_BUILD_UNIT_TESTS=OFF'",
+        "install -d /app/lib",
+        "cp -P build/webgpu/Release/libonnxruntime*.so* /app/lib/"
+    ],
     "build-options": {
         "build-args": [
             "--share=network"
@@ -9,35 +12,32 @@
             "CMAKE_POLICY_VERSION_MINIMUM": "3.5"
         }
     },
-    "build-commands": [
-        "bash -euxc 'export PATH=$PWD/node-dist/bin:$PATH; python3 tools/ci_build/build.py --build_dir build/webgpu --config Release --build_shared_lib --use_webgpu --skip_tests --parallel 3 --compile_no_warning_as_error --cmake_extra_defines CMAKE_POLICY_VERSION_MINIMUM=3.5 onnxruntime_BUILD_UNIT_TESTS=OFF'",
-        "install -d /app/lib",
-        "cp -P build/webgpu/Release/libonnxruntime*.so* /app/lib/"
-    ],
+    "buildsystem": "simple",
+    "name": "libonnxruntime",
     "sources": [
         {
-            "type": "git",
-            "url": "https://github.com/microsoft/onnxruntime.git",
             "commit": "402979ac1bef89dcd55add41eaa7277c407599eb",
-            "tag": "v1.31.0"
+            "tag": "v1.31.0",
+            "type": "git",
+            "url": "https://github.com/microsoft/onnxruntime.git"
         },
         {
-            "type": "archive",
+            "dest": "node-dist",
             "only-arches": [
                 "x86_64"
             ],
-            "url": "https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.xz",
             "sha256": "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307",
-            "dest": "node-dist"
+            "type": "archive",
+            "url": "https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.xz"
         },
         {
-            "type": "archive",
+            "dest": "node-dist",
             "only-arches": [
                 "aarch64"
             ],
-            "url": "https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-arm64.tar.xz",
             "sha256": "fff4078c5def658577f92c88db7db3bc0072924bfb93fe52c1e744a54e94abb8",
-            "dest": "node-dist"
+            "type": "archive",
+            "url": "https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-arm64.tar.xz"
         }
     ]
 }

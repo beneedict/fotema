@@ -368,17 +368,13 @@ impl PeopleAlbum {
             if self.show_ignored {
                 self.status
                     .set_title(&fl!("people-page-status-no-ignored", "title"));
-                self.status.set_description(Some(&fl!(
-                    "people-page-status-no-ignored",
-                    "description"
-                )));
+                self.status
+                    .set_description(Some(&fl!("people-page-status-no-ignored", "description")));
             } else {
                 self.status
                     .set_title(&fl!("people-page-status-no-people", "title"));
-                self.status.set_description(Some(&fl!(
-                    "people-page-status-no-people",
-                    "description"
-                )));
+                self.status
+                    .set_description(Some(&fl!("people-page-status-no-people", "description")));
             }
         }
 

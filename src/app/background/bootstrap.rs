@@ -31,9 +31,9 @@ use tracing::{error, info, warn};
 use anyhow;
 
 use super::{
+    face_tag_export_task::{FaceTagExportTask, FaceTagExportTaskInput, FaceTagExportTaskOutput},
     library_scan_task::{LibraryScanTask, LibraryScanTaskInput, LibraryScanTaskOutput},
     load_library_task::{LoadLibraryTask, LoadLibraryTaskInput, LoadLibraryTaskOutput},
-    face_tag_export_task::{FaceTagExportTask, FaceTagExportTaskInput, FaceTagExportTaskOutput},
     migrate_task::{MigrateTask, MigrateTaskInput, MigrateTaskOutput},
     person_thumbnail_task::{
         PersonThumbnailTask, PersonThumbnailTaskInput, PersonThumbnailTaskOutput,
@@ -284,7 +284,10 @@ impl Controllers {
                     );
                 }
                 if let Some(total_started_at) = self.started_at {
-                    info!("Total elapsed since bootstrap start: {:?}", total_started_at.elapsed());
+                    info!(
+                        "Total elapsed since bootstrap start: {:?}",
+                        total_started_at.elapsed()
+                    );
                 }
                 info!(
                     "Task completed: {:?}. Items updated? {:?}",
@@ -769,7 +772,9 @@ impl Bootstrap {
                 self.progress_monitor.clone(),
             ))
             .forward(sender.input_sender(), |msg| match msg {
-                PhotoClipEmbedTaskOutput::Started => BootstrapInput::TaskStarted(TaskName::ClipEmbed),
+                PhotoClipEmbedTaskOutput::Started => {
+                    BootstrapInput::TaskStarted(TaskName::ClipEmbed)
+                }
                 PhotoClipEmbedTaskOutput::Completed => {
                     BootstrapInput::TaskCompleted(TaskName::ClipEmbed, None)
                 }
