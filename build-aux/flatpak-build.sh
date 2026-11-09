@@ -109,11 +109,29 @@ sed -i "0,/<release version=\"[0-9.]*\"/s//<release version=\"$base-$suffix\"/" 
 
 REPO="$STATE/repo"
 BUILDDIR="$STATE/build"
-rm -rf "$BUILDDIR" "$REPO"
+REUSE_BUILD="${FOTEMA_REUSE_BUILD:-0}"
+if [ "$REUSE_BUILD" = "1" ]; then
+    echo ">> Reusing existing build directory (FOTEMA_REUSE_BUILD=1)"
+else
+    rm -rf "$BUILDDIR" "$REPO"
+fi
+
+BUILD_FLAGS=(
+    --user
+    --install-deps-from=flathub
+    --disable-rofiles-fuse
+    --ccache
+    --jobs=4
+)
+if [ "$REUSE_BUILD" != "1" ]; then
+    BUILD_FLAGS+=(--force-clean)
+fi
 
 flatpak install -y --user --noninteractive flathub org.flatpak.Builder >/dev/null 2>&1 || true
-flatpak run --filesystem="$ROOT" --filesystem="$STATE" --share=network org.flatpak.Builder \
-    --user --install-deps-from=flathub --force-clean --disable-rofiles-fuse \
+flatpak run --filesystem="$ROOT" --filesystem="$STATE" --share=network \
+    --env=CARGO_BUILD_JOBS=4 --env=CMAKE_BUILD_PARALLEL_LEVEL=4 \
+    org.flatpak.Builder \
+    "${BUILD_FLAGS[@]}" \
     --state-dir="$STATE/builder" \
     --repo="$REPO" "$BUILDDIR" "$MANIFEST"
 flatpak build-bundle "$REPO" "$BUNDLE" "$APPID" master

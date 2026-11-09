@@ -5,7 +5,6 @@
 use relm4::adw::{self, prelude::*};
 use relm4::gtk::{self, gdk};
 use relm4::prelude::*;
-use relm4::*;
 
 use crate::fl;
 use fotema_core::FaceId;
@@ -292,7 +291,7 @@ impl PersonSelect {
         &mut self,
         thumbnail: &PathBuf,
         people: Vec<people::Person>,
-        sender: &AsyncComponentSender<Self>,
+        _sender: &AsyncComponentSender<Self>,
     ) {
         self.people_list.remove_all();
         self.all_people.clear();
