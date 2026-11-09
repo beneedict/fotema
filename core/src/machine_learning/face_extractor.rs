@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use crate::machine_learning::ort_env;
 use crate::people::FaceDetectionCandidate;
 use crate::texture_utils;
 use crate::thumbnailify::{ThumbnailSize, Thumbnailer};
@@ -18,6 +19,7 @@ use rust_faces::{
 };
 
 use image::DynamicImage;
+use ort::environment::Environment;
 use tracing::{debug, error, info};
 
 /// Save a face crop as JPEG. Faces are stored as JPEG (never PNG) to keep the
@@ -113,8 +115,15 @@ pub struct FaceExtractor {
     detectors: Vec<(Box<dyn rust_faces::FaceDetector>, String)>,
 }
 
-impl FaceExtractor {
-    pub fn build(base_path: &Path, thumbnailer: Thumbnailer) -> Result<FaceExtractor> {
+pub struct FaceExtractorBuilder {
+    faces_base_path: PathBuf,
+    thumbnail_base_path: PathBuf,
+    thumbnailer: Thumbnailer,
+    env: Environment,
+}
+
+impl FaceExtractorBuilder {
+    pub fn new(base_path: &Path, thumbnailer: Thumbnailer) -> Result<FaceExtractorBuilder> {
         let faces_base_path = PathBuf::from(base_path).join("faces");
         let _ = std::fs::create_dir_all(&faces_base_path)?;
 
@@ -123,6 +132,18 @@ impl FaceExtractor {
             .join("small");
         let _ = std::fs::create_dir_all(&thumbnail_base_path)?;
 
+        // One environment for the whole process; CLIP uses the same one.
+        let env = ort_env::shared_environment()?.clone();
+
+        Ok(FaceExtractorBuilder {
+            faces_base_path,
+            thumbnail_base_path,
+            thumbnailer,
+            env,
+        })
+    }
+
+    pub fn build(&self) -> Result<FaceExtractor> {
         let mut detectors: Vec<(Box<dyn rust_faces::FaceDetector>, String)> = vec![];
 
         let bz_params_default = BlazeFaceParams::default();
@@ -130,7 +151,7 @@ impl FaceExtractor {
         let blaze_face_default =
             FaceDetectorBuilder::new(FaceDetection::BlazeFace640(bz_params_default.clone()))
                 .download()
-                .build()?;
+                .build(&self.env)?;
 
         detectors.push((blaze_face_default, "blaze_face_640_default".into()));
 
@@ -140,13 +161,15 @@ impl FaceExtractor {
         // fast and sufficient. Re-add here if higher recall is needed.
 
         Ok(FaceExtractor {
-            faces_base_path,
-            thumbnail_base_path,
-            thumbnailer,
+            faces_base_path: self.faces_base_path.clone(),
+            thumbnail_base_path: self.thumbnail_base_path.clone(),
+            thumbnailer: self.thumbnailer.clone(),
             detectors,
         })
     }
+}
 
+impl FaceExtractor {
     /// Identify faces in a photo and return a vector of paths of extracted face images.
     pub async fn extract_faces(&mut self, candidate: &FaceDetectionCandidate) -> Result<Vec<Face>> {
         info!("Detecting faces in {:?}", candidate.path.host_path);
@@ -308,7 +331,7 @@ impl FaceExtractor {
         let file = gio::File::for_path(source_path);
 
         let loader = glycin::Loader::new(file);
-        let image = loader.load().await?;
+        let mut image = loader.load().await?;
         let frame = image.next_frame().await?;
         let image = texture_utils::texture_to_rgba(frame.texture())?;
         Ok(image)

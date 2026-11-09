@@ -95,7 +95,7 @@ suffix=$(printf '%02d' "$n")
 # the authoritative current version; fall back to the meson project version if
 # tags are unavailable. Used as the single base everywhere so the in-app
 # VERSION, the Flatpak version and the update check all agree.
-base=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+base=$(git describe --tags --match 'v[0-9]*' --abbrev=0 2>/dev/null | sed 's/^v//')
 [ -n "$base" ] || base=$(grep -m1 -oP "version: '\K[0-9.]+" meson.build)
 echo ">> Build $base-$suffix (Fotema git version $base + build suffix -$suffix)"
 

@@ -13,9 +13,9 @@ interchangeable module files provide that library — all install the same
 
 | Module | What it ships | Flathub-safe | Notes |
 |---|---|---|---|
-| `libonnxruntime.json` | **CPU** stock prebuilt (default) | ✅ | Reference this in the committed manifest. |
-| `libonnxruntime-webgpu.json` | **GPU** prebuilt (WebGPU/Dawn→Vulkan/Metal/D3D) | ✅ | Downloads a release artifact; fast; one-line opt-in. |
-| `libonnxruntime-webgpu-source.json` | GPU built **from source** | ❌ (build-time network, ~1h) | Only to *regenerate* the prebuilt artifact. |
+| `libonnxruntime.json` | **CPU** stock prebuilt 1.31 (default) | ✅ | Reference this in the committed manifest. |
+| `libonnxruntime-webgpu.json` | **GPU** prebuilt (WebGPU/Dawn→Vulkan/Metal/D3D) | ✅ | Downloads a release artifact; fast; one-line opt-in. Currently 1.24.4 – regenerate for 1.31 before publishing. |
+| `libonnxruntime-webgpu-source.json` | GPU built **from source** (1.31) | ❌ (build-time network, ~1h) | Default for local `FOTEMA_ORT=webgpu-source` builds. |
 
 The GPU build is **vendor-neutral**: the same library accelerates on Intel / AMD /
 NVIDIA / ARM GPUs via Vulkan (the GNOME runtime ships Mesa Vulkan; `--device=dri`
@@ -54,7 +54,7 @@ update the URL + `sha256` in `libonnxruntime-webgpu.json`:
 FOTEMA_ORT=webgpu-source build-aux/flatpak-build.sh
 
 # 2. Package it as <top>/lib/libonnxruntime.so* and publish as a release asset, e.g.
-gh release create onnxruntime-webgpu-1.30.0 onnxruntime-webgpu-linux-x64-1.30.0.tgz
+gh release create onnxruntime-webgpu-1.31.0 onnxruntime-webgpu-linux-x64-1.31.0.tgz
 
 # 3. Put the asset URL + sha256 into libonnxruntime-webgpu.json
 ```

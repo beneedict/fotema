@@ -18,8 +18,8 @@
         {
             "type": "git",
             "url": "https://github.com/microsoft/onnxruntime.git",
-            "commit": "f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7",
-            "tag": "v1.30.0"
+            "commit": "402979ac1bef89dcd55add41eaa7277c407599eb",
+            "tag": "v1.31.0"
         },
         {
             "type": "archive",

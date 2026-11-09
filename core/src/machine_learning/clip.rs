@@ -18,12 +18,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 
-use ort::execution_providers::{CPU, CUDA, CoreML, WebGPU};
+use ort::ep::{CPU, CUDA, CoreML, WebGPU};
 use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::value::Tensor;
 
 use crate::machine_learning::model_download::{ModelFile, ensure_model};
+use crate::machine_learning::ort_env;
 use tokenizers::Tokenizer;
 
 /// Model identifier stored alongside each embedding in the DB. If the model ever
@@ -241,7 +242,8 @@ fn build_session(model_path: &Path, gpu: bool) -> Result<Session> {
     } else {
         vec![CPU::default().build()]
     };
-    let session = Session::builder()
+    let env = ort_env::shared_environment()?;
+    let session = Session::builder(env)
         .map_err(|e| anyhow!("CLIP session builder: {e}"))?
         .with_execution_providers(eps)
         .map_err(|e| anyhow!("CLIP execution providers: {e}"))?
