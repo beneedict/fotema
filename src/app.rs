@@ -763,7 +763,9 @@ impl SimpleAsyncComponent for App {
                 UnknownPeopleOutput::Changed => AppMsg::FacesChanged,
             });
 
-        adaptive_layout.subscribe(faces_page.sender(), |layout| UnknownPeopleInput::Adapt(*layout));
+        adaptive_layout.subscribe(faces_page.sender(), |layout| {
+            UnknownPeopleInput::Adapt(*layout)
+        });
 
         let person_album = PersonAlbum::builder()
             .launch((
