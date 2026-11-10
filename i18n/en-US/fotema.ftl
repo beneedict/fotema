@@ -39,6 +39,14 @@ places-page = Places
 # Title for people page which shows an album of faces.
 people-page = People
 
+# Title for the grid of detected, not-yet-named faces.
+faces-page = Unknown People
+
+# Status page shown when there are no unnamed faces left.
+faces-page-empty =
+  .title = No unnamed faces
+  .description = Name detected faces to create a person album.
+
 # Status page shown for people album when face detection is disabled.
 people-page-status-off =
   .title = Enable face detection?

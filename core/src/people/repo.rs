@@ -343,6 +343,106 @@ impl Repository {
         Ok(result)
     }
 
+    /// All detected, unnamed, non-ignored faces, clustered by embedding
+    /// similarity. The most frequently occurring cluster comes first; faces
+    /// without an embedding are appended at the end.
+    pub fn find_unnamed_faces(&self) -> Result<Vec<model::Face>> {
+        let rows: Vec<(model::Face, Option<Vec<f32>>)> = {
+            let con = self.con.lock().unwrap();
+            let mut stmt = con.prepare(
+                "SELECT faces.face_id AS face_id,
+                        faces.thumbnail_path AS face_thumbnail_path,
+                        faces.embedding AS embedding
+                 FROM pictures_faces AS faces
+                 WHERE faces.person_id IS NULL AND faces.is_ignored = FALSE
+                 ORDER BY faces.face_id",
+            )?;
+
+            let data_dir = self.data_dir_base_path.clone();
+            stmt.query_map([], move |row| {
+                let face_id = row.get("face_id").map(FaceId::new)?;
+                let thumbnail_path = row
+                    .get("face_thumbnail_path")
+                    .map(|p: String| data_dir.join(p))?;
+                let bytes: Option<Vec<u8>> = row.get("embedding")?;
+                let embedding = bytes.map(|b| {
+                    b.chunks_exact(4)
+                        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                        .collect::<Vec<f32>>()
+                });
+                Ok((
+                    model::Face {
+                        face_id,
+                        thumbnail_path,
+                    },
+                    embedding,
+                ))
+            })?
+            .flatten()
+            .collect()
+        };
+
+        Ok(Self::cluster_and_order(rows))
+    }
+
+    /// Greedy clustering of faces by normalised-embedding L2 distance. The most
+    /// frequent cluster comes first. Faces without a current embedding are
+    /// appended at the end.
+    fn cluster_and_order(faces: Vec<(model::Face, Option<Vec<f32>>)>) -> Vec<model::Face> {
+        use crate::machine_learning::face_recognizer::EMBEDDING_DIM;
+        // L2 distance of L2-normalised ArcFace features below which two faces
+        // are considered the same person (≈ cosine 0.40). Tunable.
+        const THRESHOLD: f32 = 1.10;
+
+        let mut with_embedding: Vec<(model::Face, Vec<f32>)> = Vec::new();
+        let mut without: Vec<model::Face> = Vec::new();
+        for (face, embedding) in faces {
+            match embedding {
+                Some(e) if e.len() == EMBEDDING_DIM => {
+                    let norm = e.iter().map(|x| x * x).sum::<f32>().sqrt();
+                    let e = if norm > 0.0 {
+                        e.iter().map(|x| x / norm).collect()
+                    } else {
+                        e
+                    };
+                    with_embedding.push((face, e));
+                }
+                _ => without.push(face),
+            }
+        }
+
+        let mut clusters: Vec<Vec<(model::Face, Vec<f32>)>> = Vec::new();
+        for (face, e) in with_embedding {
+            let mut found = None;
+            for (i, cluster) in clusters.iter().enumerate() {
+                let rep = &cluster[0].1;
+                let dist = e
+                    .iter()
+                    .zip(rep)
+                    .map(|(a, b)| (a - b) * (a - b))
+                    .sum::<f32>()
+                    .sqrt();
+                if dist < THRESHOLD {
+                    found = Some(i);
+                    break;
+                }
+            }
+            match found {
+                Some(i) => clusters[i].push((face, e)),
+                None => clusters.push(vec![(face, e)]),
+            }
+        }
+
+        clusters.sort_by(|a, b| b.len().cmp(&a.len()));
+
+        let mut result: Vec<model::Face> = clusters
+            .into_iter()
+            .flat_map(|c| c.into_iter().map(|(f, _)| f))
+            .collect();
+        result.extend(without);
+        result
+    }
+
     /// Store an L2-normalised ArcFace embedding (little-endian f32 vector) for a
     /// face.
     pub fn store_face_embedding(&self, face_id: FaceId, embedding: &[f32]) -> Result<()> {
