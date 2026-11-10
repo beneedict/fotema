@@ -304,11 +304,10 @@ impl SimpleAsyncComponent for PreferencesDialog {
                         Ok(files) => {
                             info!("Open: {:?}", files);
                             if let Some(first) = files.uris().first() {
-                                let some_library_base_dir = files.uris().first().and_then(|uri| {
-                                    glib::Uri::parse(uri.as_str(), glib::UriFlags::NONE)
+                                let some_library_base_dir =
+                                    glib::Uri::parse(first.as_str(), glib::UriFlags::NONE)
                                         .map(|glib_uri| PathBuf::from(glib_uri.path()))
-                                        .ok()
-                                });
+                                        .ok();
 
                                 if let Some(library_base_dir) = some_library_base_dir {
                                     info!(

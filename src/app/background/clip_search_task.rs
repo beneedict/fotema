@@ -179,7 +179,10 @@ impl Worker for ClipSearchTask {
     type Input = ClipSearchTaskInput;
     type Output = ClipSearchTaskOutput;
 
-    fn init((cache_dir, search_repo, people_repo): Self::Init, _sender: ComponentSender<Self>) -> Self {
+    fn init(
+        (cache_dir, search_repo, people_repo): Self::Init,
+        _sender: ComponentSender<Self>,
+    ) -> Self {
         ClipSearchTask {
             cache_dir,
             search_repo,

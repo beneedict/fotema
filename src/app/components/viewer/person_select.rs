@@ -5,7 +5,6 @@
 use relm4::adw::{self, prelude::*};
 use relm4::gtk::{self, gdk};
 use relm4::prelude::*;
-use relm4::*;
 
 use crate::fl;
 use fotema_core::FaceId;
@@ -262,7 +261,11 @@ impl SimpleAsyncComponent for PersonSelect {
                     .all_names
                     .iter()
                     .find(|n| n.to_lowercase().starts_with(&query))
-                    .or_else(|| self.all_names.iter().find(|n| n.to_lowercase().contains(&query)));
+                    .or_else(|| {
+                        self.all_names
+                            .iter()
+                            .find(|n| n.to_lowercase().contains(&query))
+                    });
                 if let Some(name) = best {
                     self.face_name.set_text(name);
                     self.face_name.set_position(-1);
@@ -292,7 +295,7 @@ impl PersonSelect {
         &mut self,
         thumbnail: &PathBuf,
         people: Vec<people::Person>,
-        sender: &AsyncComponentSender<Self>,
+        _sender: &AsyncComponentSender<Self>,
     ) {
         self.people_list.remove_all();
         self.all_people.clear();

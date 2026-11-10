@@ -14,23 +14,23 @@ anyhow = "1.0.101"
 base64 = "0.23.0"
 chrono = "0.4.44"
 fast_image_resize = { version = "6.0.0", features = ["image"] }
-ffmpeg-next = "8.0.0"
-gdk4 = "0.11.2"
-gio = "0.22.5"
-glycin = { version = "3.1.0", features = ["gdk4"] }
+ffmpeg-next = "9.0.0"
+gdk4 = "0.11.5"
+gio = "0.22.10"
+glycin = { version = "4.0.2", features = ["gdk4"] }
 h3o = "0.11.0"
 image = "0.25.9"
 kamadak-exif = "0.6.1"
 rayon = "1.11.0"
-refinery = { version = "0.9.1", features = ["rusqlite"] }
-rusqlite = { version = "0.39.0", features = ["bundled", "chrono"] }
-rust-faces = {git = "https://github.com/blissd/fotema-rust-faces.git", tag = "v2.1.0", features = ["viz"]}
+refinery = { version = "0.10.0", features = ["rusqlite"] }
+rusqlite = { version = "0.40.2", features = ["bundled", "chrono"] }
+rust-faces = {git = "https://github.com/blissd/fotema-rust-faces.git", rev = "0bf0080431b7614c739014830a4eac16fae31b58", features = ["viz"]}
 sm_motion_photo = "0.1.5"
 strum = { version = "0.28", features = ["derive"] }
 tempfile = "3.27.0"
 tracing = "0.1.44"
 walkdir = "2.5.0"
-opencv = {version = "0.100.1", default-features = false, features = ["clang-runtime", "features2d", "objdetect", "imgcodecs", "dnn"]}
+opencv = {version = "0.101.0", default-features = false, features = ["clang-runtime", "features2d", "objdetect", "imgcodecs", "dnn"]}
 itertools = "0.14.0"
 reqwest = { version = "0.13.4", features = ["blocking"] }
 futures = "0.3.32"
@@ -41,7 +41,7 @@ md5 = "0.8.0"
 sha2 = "0.10.9"
 thiserror = "2.0.18"
 byteorder = "1.5.0"
-video-rs = {version = "0.11", features = ["ndarray"]}
+video-rs = {version = "0.12", features = ["ndarray"]}
 quick-xml = "0.37.5"
 # The CLIP smart search uses `ort`. The crate rust-faces already includes `ort`.
 # The Flatpak contains the onnxruntime library, and src/main.rs finds it with
@@ -57,7 +57,7 @@ quick-xml = "0.37.5"
 # With `load-dynamic` a feature controls only the Rust API. The build does not need
 # a CUDA or CoreML SDK. If the onnxruntime library does not contain an execution
 # provider, the application ignores it and uses the CPU.
-ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic", "webgpu", "cuda", "coreml"] }
+ort = { version = "=2.0.0-rc.14", default-features = false, features = ["load-dynamic", "webgpu", "cuda", "coreml"] }
 # The CLIP text encoder uses this tokenizer. The crate is pure Rust. Set
 # default-features to false to remove the C and C++ dependencies onig, esaxx_fast
 # and progressbar. The feature `fancy-regex` gives a regular expression engine in

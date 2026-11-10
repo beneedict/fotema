@@ -492,11 +492,8 @@ impl Album {
             // Relevance order: keep only matched pictures and order them by their
             // position in `ids` (best match first). PictureId isn't Hash, so key
             // the rank lookup by the inner i64.
-            let rank: std::collections::HashMap<i64, usize> = ids
-                .iter()
-                .enumerate()
-                .map(|(i, id)| (id.id(), i))
-                .collect();
+            let rank: std::collections::HashMap<i64, usize> =
+                ids.iter().enumerate().map(|(i, id)| (id.id(), i)).collect();
             all.retain(|item| {
                 item.visual
                     .picture_id

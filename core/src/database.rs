@@ -34,3 +34,34 @@ fn run_migrations(con: &mut Connection) -> Result<()> {
         .run(con)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Opening the same database twice must not apply anything a second time.
+    /// This is the property that lets an existing library survive an upgrade.
+    #[test]
+    fn setup_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pictures.sqlite");
+
+        let first = setup(&path).unwrap();
+        let first_count: i64 = first
+            .query_row("SELECT COUNT(*) FROM refinery_schema_history", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        drop(first);
+
+        let second = setup(&path).unwrap();
+        let second_count: i64 = second
+            .query_row("SELECT COUNT(*) FROM refinery_schema_history", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+
+        assert_eq!(first_count, second_count);
+        assert!(first_count >= 32);
+    }
+}

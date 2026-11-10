@@ -106,10 +106,11 @@ impl PhotoClipEmbedTask {
             }
             match embedder.embedding(&thumbnail_path) {
                 Ok(embedding) => {
-                    if let Err(e) =
-                        self.search_repo
-                            .store_clip_embedding(picture_id, clip::MODEL_NAME, &embedding)
-                    {
+                    if let Err(e) = self.search_repo.store_clip_embedding(
+                        picture_id,
+                        clip::MODEL_NAME,
+                        &embedding,
+                    ) {
                         error!("Failed storing CLIP embedding for {}: {:?}", picture_id, e);
                     }
                 }

@@ -70,7 +70,8 @@ fn core(version: &str) -> &str {
 /// segments count as 0, so patch releases (2.4.2 -> 2.4.3) are detected, not
 /// just major/minor. The local build suffix is ignored (see [`core`]).
 fn is_newer(latest: &str, installed: &str) -> bool {
-    let parse = |v: &str| -> Vec<u32> { core(v).split('.').filter_map(|p| p.parse().ok()).collect() };
+    let parse =
+        |v: &str| -> Vec<u32> { core(v).split('.').filter_map(|p| p.parse().ok()).collect() };
     let latest = parse(latest);
     let installed = parse(installed);
 

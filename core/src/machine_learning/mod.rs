@@ -8,4 +8,5 @@ pub mod face_extractor;
 pub mod face_recognizer;
 pub mod model_download;
 pub mod nms;
+pub mod ort_env;
 //pub mod yolov8;

@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: © 2026 Benedikt Nimmervoll
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
 # Build the release Flatpak (app.fotema.Fotema), keeping the upstream Fotema
 # version and appending an incrementing build suffix (-01, -02, ...) so each
 # build is uniquely identifiable. The suffix is applied only for the build; the
@@ -95,7 +98,7 @@ suffix=$(printf '%02d' "$n")
 # the authoritative current version; fall back to the meson project version if
 # tags are unavailable. Used as the single base everywhere so the in-app
 # VERSION, the Flatpak version and the update check all agree.
-base=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+base=$(git describe --tags --match 'v[0-9]*' --abbrev=0 2>/dev/null | sed 's/^v//')
 [ -n "$base" ] || base=$(grep -m1 -oP "version: '\K[0-9.]+" meson.build)
 echo ">> Build $base-$suffix (Fotema git version $base + build suffix -$suffix)"
 
@@ -109,11 +112,29 @@ sed -i "0,/<release version=\"[0-9.]*\"/s//<release version=\"$base-$suffix\"/" 
 
 REPO="$STATE/repo"
 BUILDDIR="$STATE/build"
-rm -rf "$BUILDDIR" "$REPO"
+REUSE_BUILD="${FOTEMA_REUSE_BUILD:-0}"
+if [ "$REUSE_BUILD" = "1" ]; then
+    echo ">> Reusing existing build directory (FOTEMA_REUSE_BUILD=1)"
+else
+    rm -rf "$BUILDDIR" "$REPO"
+fi
+
+BUILD_FLAGS=(
+    --user
+    --install-deps-from=flathub
+    --disable-rofiles-fuse
+    --ccache
+    --jobs=4
+)
+if [ "$REUSE_BUILD" != "1" ]; then
+    BUILD_FLAGS+=(--force-clean)
+fi
 
 flatpak install -y --user --noninteractive flathub org.flatpak.Builder >/dev/null 2>&1 || true
-flatpak run --filesystem="$ROOT" --filesystem="$STATE" --share=network org.flatpak.Builder \
-    --user --install-deps-from=flathub --force-clean --disable-rofiles-fuse \
+flatpak run --filesystem="$ROOT" --filesystem="$STATE" --share=network \
+    --env=CARGO_BUILD_JOBS=4 --env=CMAKE_BUILD_PARALLEL_LEVEL=4 \
+    org.flatpak.Builder \
+    "${BUILD_FLAGS[@]}" \
     --state-dir="$STATE/builder" \
     --repo="$REPO" "$BUILDDIR" "$MANIFEST"
 flatpak build-bundle "$REPO" "$BUNDLE" "$APPID" master

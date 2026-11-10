@@ -31,6 +31,9 @@ impl PhotoThumbnailer {
             anyhow::bail!("Failed thumbnail marker exists for {:?}", path.host_path);
         }
 
+        // Generate every size from one decode. XLarge (used by face detection
+        // and CLIP) is included in `EAGER_SIZES`, so this also fulfils the
+        // upstream requirement to always have an XLarge thumbnail.
         self.thumbnail_all_internal(path, ThumbnailQuality::High)
             .await
             .map_err(|err| {
@@ -92,7 +95,7 @@ impl PhotoThumbnailer {
     async fn decode(&self, path: &FlatpakPathBuf) -> Result<image::DynamicImage> {
         let file = gio::File::for_path(&path.sandbox_path);
         let loader = glycin::Loader::new(file);
-        let image = loader.load().await.map_err(|err| {
+        let mut image = loader.load().await.map_err(|err| {
             error!("Glycin failed to load file at {:?}", path.sandbox_path);
             err
         })?;

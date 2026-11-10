@@ -105,8 +105,7 @@ impl LibraryScanTask {
             start.elapsed().as_secs()
         );
 
-        self.progress_monitor
-            .emit(ProgressMonitorInput::Complete);
+        self.progress_monitor.emit(ProgressMonitorInput::Complete);
 
         sender
             .output(LibraryScanTaskOutput::Completed)

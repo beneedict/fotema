@@ -121,10 +121,14 @@ impl VideoThumbnailer {
             ImageBuffer::from_raw(width, height, frame_slice.to_vec())
                 .context("Failed to construct image buffer.")?;
 
+        // `av_display_rotation_get` now follows the upstream fix and returns a
+        // signed, rounded angle (for example -90 for a quarter turn). Keep the
+        // positive 270 form as a fallback for callers/tests that normalise the
+        // angle instead.
         let buffer = match rotation {
             90.0 => imageops::rotate90(&buffer),
-            180.0 => imageops::rotate180(&buffer),
-            270.0 => imageops::rotate270(&buffer),
+            180.0 | -180.0 => imageops::rotate180(&buffer),
+            -90.0 | 270.0 => imageops::rotate270(&buffer),
             _ => buffer,
         };
 
