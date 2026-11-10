@@ -30,9 +30,7 @@ use tracing::{error, info, warn};
 use anyhow;
 
 use super::{
-    face_tag_export_task::{
-        FaceTagExportTask, FaceTagExportTaskInput, FaceTagExportTaskOutput,
-    },
+    face_tag_export_task::{FaceTagExportTask, FaceTagExportTaskInput, FaceTagExportTaskOutput},
     library_scan_task::{LibraryScanTask, LibraryScanTaskInput, LibraryScanTaskOutput},
     load_library_task::{LoadLibraryTask, LoadLibraryTaskInput, LoadLibraryTaskOutput},
     migrate_task::{MigrateTask, MigrateTaskInput, MigrateTaskOutput},
@@ -405,9 +403,7 @@ impl Controllers {
         };
         let mode = self.settings_state.read().face_detection_mode;
         if enabled && matches!(mode, FaceDetectionMode::On) {
-            self.enqueue(Box::new(move || {
-                sender.emit(FaceTagExportTaskInput::Start)
-            }));
+            self.enqueue(Box::new(move || sender.emit(FaceTagExportTaskInput::Start)));
         }
     }
 
