@@ -338,6 +338,11 @@ prefs-processing-face-detection = Face detection
 prefs-processing-recognition-auto = Automatic person recognition
   .subtitle = After you name a face, look through the library in the background for that person's other faces.
 
+# Preferences dialog switch that enables or disables reading and writing of
+# person names in photo XMP sidecar files.
+prefs-processing-xmp-face-tags = XMP face tags
+    .subtitle = Reads person names that other programs wrote into the photo's XMP sidecar file, and writes your confirmed names back. When off, Fotema ignores XMP face tags completely.
+
 # Preferences dialog switch for writing person names into the XMP sidecar file
 # of each photo, so a file sync tool can carry them to another computer.
 prefs-processing-write-face-tags = Save person names to photos

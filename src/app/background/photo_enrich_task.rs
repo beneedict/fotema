@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use tracing::{error, info};
 
+use crate::app::SettingsState;
 use crate::app::components::progress_monitor::{
     MediaType, ProgressMonitor, ProgressMonitorInput, TaskName,
 };
@@ -40,6 +41,8 @@ pub struct PhotoEnrichTask {
     repo: fotema_core::photo::Repository,
 
     progress_monitor: Arc<Reducer<ProgressMonitor>>,
+
+    settings_state: SettingsState,
 }
 
 impl PhotoEnrichTask {
@@ -47,6 +50,7 @@ impl PhotoEnrichTask {
         stop: Arc<AtomicBool>,
         mut repo: fotema_core::photo::Repository,
         progress_monitor: Arc<Reducer<ProgressMonitor>>,
+        settings_state: SettingsState,
         sender: &ComponentSender<PhotoEnrichTask>,
     ) -> Result<()> {
         let start = std::time::Instant::now();
@@ -69,22 +73,27 @@ impl PhotoEnrichTask {
             count,
         ));
 
-        // Read EXIF metadata and embedded XMP face-region person tags in a
-        // single file read per photo.
+        // Read EXIF metadata and, when XMP face tags are enabled, embedded
+        // XMP face-region person tags in a single file read per photo.
+        let read_face_tags = settings_state.read().xmp_face_tags;
         let enriched: Vec<_> = unprocessed
             .par_iter()
             .take_any_while(|_| !stop.load(Ordering::Relaxed))
             .flat_map(|pic| {
-                let result = metadata::from_path_with_face_tags(&pic.sandbox_path())
-                    .map_err(|e| {
-                        tracing::warn!(
-                            "Failed to extract metadata for {:?}: {}",
-                            pic.sandbox_path(),
-                            e
-                        )
-                    })
-                    .ok()
-                    .map(|(m, tags)| (pic.picture_id, m, tags));
+                let result = if read_face_tags {
+                    metadata::from_path_with_face_tags(&pic.sandbox_path())
+                } else {
+                    metadata::from_path(&pic.sandbox_path()).map(|meta| (meta, Vec::new()))
+                }
+                .map_err(|e| {
+                    tracing::warn!(
+                        "Failed to extract metadata for {:?}: {}",
+                        pic.sandbox_path(),
+                        e
+                    )
+                })
+                .ok()
+                .map(|(m, tags)| (pic.picture_id, m, tags));
                 progress_monitor.emit(ProgressMonitorInput::Advance);
                 result
             })
@@ -121,15 +130,20 @@ impl Worker for PhotoEnrichTask {
         Arc<AtomicBool>,
         fotema_core::photo::Repository,
         Arc<Reducer<ProgressMonitor>>,
+        SettingsState,
     );
     type Input = PhotoEnrichTaskInput;
     type Output = PhotoEnrichTaskOutput;
 
-    fn init((stop, repo, progress_monitor): Self::Init, _sender: ComponentSender<Self>) -> Self {
+    fn init(
+        (stop, repo, progress_monitor, settings_state): Self::Init,
+        _sender: ComponentSender<Self>,
+    ) -> Self {
         PhotoEnrichTask {
             stop,
             repo,
             progress_monitor,
+            settings_state,
         }
     }
 
@@ -140,10 +154,17 @@ impl Worker for PhotoEnrichTask {
                 let repo = self.repo.clone();
                 let stop = self.stop.clone();
                 let progress_monitor = self.progress_monitor.clone();
+                let settings_state = self.settings_state.clone();
 
                 // Avoid runtime panic from calling block_on
                 rayon::spawn(move || {
-                    if let Err(e) = PhotoEnrichTask::enrich(stop, repo, progress_monitor, &sender) {
+                    if let Err(e) = PhotoEnrichTask::enrich(
+                        stop,
+                        repo,
+                        progress_monitor,
+                        settings_state,
+                        &sender,
+                    ) {
                         error!("Failed to update previews: {}", e);
                         // enrich() failed before sending Completed; signal it
                         // anyway so the bootstrap task queue keeps advancing.

@@ -23,6 +23,7 @@ use fotema_core::photo::model::Orientation;
 use fotema_core::thumbnailify::Thumbnailer;
 use fotema_core::{FaceId, FlatpakPathBuf, PersonId, PictureId};
 
+use crate::app::SettingsState;
 use crate::app::components::progress_monitor::{ProgressMonitor, ProgressMonitorInput, TaskName};
 
 #[derive(Debug)]
@@ -61,6 +62,8 @@ pub struct PhotoRecognizeFacesTask {
     photo_repo: photo::Repository,
 
     progress_monitor: Arc<Reducer<ProgressMonitor>>,
+
+    settings_state: SettingsState,
 
     cache_dir: PathBuf,
 
@@ -293,6 +296,9 @@ impl PhotoRecognizeFacesTask {
     /// pick up tags added by other apps since the last enrich), refresh the
     /// cached regions, and re-match. Used by the manual menu action.
     fn rescan_face_tags(&self) -> Result<usize> {
+        if !self.settings_state.read().xmp_face_tags {
+            return Ok(0);
+        }
         let _ = self.photo_repo.clone().reset_face_tags_imported();
 
         let groups = self.unnamed_faces_by_picture()?;
@@ -334,11 +340,16 @@ impl PhotoRecognizeFacesTask {
         let start = std::time::Instant::now();
 
         // Import names already present in the photos' metadata before computing
-        // embeddings, so imported faces drop out of the unnamed set.
-        match self.import_face_tags() {
-            Ok(n) if n > 0 => info!("Imported {} face name(s) from photo metadata.", n),
-            Ok(_) => {}
-            Err(e) => error!("Face-tag import failed: {:?}", e),
+        // embeddings, so imported faces drop out of the unnamed set. XMP face
+        // tags are optional; when they are off, do not touch the sidecars.
+        if self.settings_state.read().xmp_face_tags {
+            match self.import_face_tags() {
+                Ok(n) if n > 0 => info!("Imported {} face name(s) from photo metadata.", n),
+                Ok(_) => {}
+                Err(e) => error!("Face-tag import failed: {:?}", e),
+            }
+        } else {
+            info!("XMP face tags are disabled; skipping name import");
         }
 
         // Faces that still need an ArcFace embedding (for clustering in the
@@ -531,13 +542,14 @@ impl Worker for PhotoRecognizeFacesTask {
         PathBuf,
         people::Repository,
         photo::Repository,
+        SettingsState,
         Arc<Reducer<ProgressMonitor>>,
     );
     type Input = PhotoRecognizeFacesTaskInput;
     type Output = PhotoRecognizeFacesTaskOutput;
 
     fn init(
-        (stop, cache_dir, repo, photo_repo, progress_monitor): Self::Init,
+        (stop, cache_dir, repo, photo_repo, settings_state, progress_monitor): Self::Init,
         _sender: ComponentSender<Self>,
     ) -> Self {
         let thumbnailer = Thumbnailer::build(&cache_dir.join("thumbnails"));
@@ -546,6 +558,7 @@ impl Worker for PhotoRecognizeFacesTask {
             cache_dir,
             repo,
             photo_repo,
+            settings_state,
             progress_monitor,
             thumbnailer,
         }

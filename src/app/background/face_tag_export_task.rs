@@ -23,6 +23,8 @@ use fotema_core::photo::detection_size::DetectionSize;
 use fotema_core::photo::face_tags::{self, FaceTag, TagArea, WriteOutcome};
 use fotema_core::thumbnailify::Thumbnailer;
 
+use crate::app::SettingsState;
+
 #[derive(Debug)]
 pub enum FaceTagExportTaskInput {
     Start,
@@ -43,11 +45,23 @@ pub struct FaceTagExportTask {
     repo: fotema_core::photo::Repository,
 
     thumbnailer: Thumbnailer,
+
+    settings_state: SettingsState,
 }
 
 impl FaceTagExportTask {
     fn export(&self, sender: &ComponentSender<Self>) -> Result<usize> {
         let start = std::time::Instant::now();
+
+        // XMP export is optional. Re-check here as well as in the bootstrap, so
+        // a task that was queued before the user turned XMP off writes nothing.
+        {
+            let settings = self.settings_state.read();
+            if !settings.xmp_face_tags || !settings.write_face_tags {
+                info!("XMP face tag export is disabled; nothing to do");
+                return Ok(0);
+            }
+        }
 
         let pending = self.repo.find_pictures_for_face_tag_export()?;
         if pending.is_empty() {
@@ -63,6 +77,12 @@ impl FaceTagExportTask {
 
         for pic in pending {
             if self.stop.load(Ordering::Relaxed) {
+                break;
+            }
+
+            // The user can turn XMP off while this run is in progress.
+            if !self.settings_state.read().xmp_face_tags {
+                info!("XMP face tags were disabled; stopping the export");
                 break;
             }
 
@@ -147,15 +167,24 @@ impl FaceTagExportTask {
 }
 
 impl Worker for FaceTagExportTask {
-    type Init = (Arc<AtomicBool>, fotema_core::photo::Repository, Thumbnailer);
+    type Init = (
+        Arc<AtomicBool>,
+        fotema_core::photo::Repository,
+        Thumbnailer,
+        SettingsState,
+    );
     type Input = FaceTagExportTaskInput;
     type Output = FaceTagExportTaskOutput;
 
-    fn init((stop, repo, thumbnailer): Self::Init, _sender: ComponentSender<Self>) -> Self {
+    fn init(
+        (stop, repo, thumbnailer, settings_state): Self::Init,
+        _sender: ComponentSender<Self>,
+    ) -> Self {
         Self {
             stop,
             repo,
             thumbnailer,
+            settings_state,
         }
     }
 

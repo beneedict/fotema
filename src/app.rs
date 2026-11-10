@@ -181,6 +181,10 @@ pub struct Settings {
     /// stop it here.
     pub write_face_tags: bool,
 
+    /// Read and write person names in photo XMP sidecars. When off, Fotema
+    /// ignores XMP face tags completely: it neither imports nor exports names.
+    pub xmp_face_tags: bool,
+
     /// Automatically check GitHub for a newer release on startup.
     pub update_check_enabled: bool,
 
@@ -970,6 +974,7 @@ impl SimpleAsyncComponent for App {
             .forward(sender.input_sender(), |msg| match msg {
                 PreferencesOutput::EnableFaceDetection => AppMsg::ScanPicturesForFaces,
                 PreferencesOutput::ProcessMotionPhotos => AppMsg::ProcessMotionPhotos,
+                PreferencesOutput::XmpFaceTagsEnabled => AppMsg::RescanFaceTags,
             });
 
         let picture_navigation_view = adw::NavigationView::builder().build();
@@ -1520,6 +1525,7 @@ impl App {
             show_selfies: gio_settings.boolean("show-selfies"),
             process_motion_photos: gio_settings.boolean("process-motion-photos"),
             write_face_tags: gio_settings.boolean("write-face-tags"),
+            xmp_face_tags: gio_settings.boolean("xmp-face-tags"),
             update_check_enabled: gio_settings.boolean("update-check-enabled"),
             face_recognition_auto: gio_settings.boolean("face-recognition-auto"),
             face_detection_mode: FaceDetectionMode::from_str(
@@ -1539,6 +1545,7 @@ impl App {
         gio_settings.set_boolean("show-selfies", settings.show_selfies)?;
         gio_settings.set_boolean("process-motion-photos", settings.process_motion_photos)?;
         gio_settings.set_boolean("write-face-tags", settings.write_face_tags)?;
+        gio_settings.set_boolean("xmp-face-tags", settings.xmp_face_tags)?;
         gio_settings.set_boolean("update-check-enabled", settings.update_check_enabled)?;
         gio_settings.set_boolean("face-recognition-auto", settings.face_recognition_auto)?;
         gio_settings.set_string("face-detection-mode", settings.face_detection_mode.as_ref())?;

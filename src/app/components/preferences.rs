@@ -60,6 +60,9 @@ pub enum PreferencesInput {
 
     UpdateFaceRecognitionAuto(bool),
 
+    /// Enable or disable reading and writing XMP face tags.
+    UpdateXmpFaceTags(bool),
+
     /// Write person names to the XMP sidecar files.
     UpdateWriteFaceTags(bool),
 
@@ -79,6 +82,9 @@ pub enum PreferencesOutput {
 
     /// Process motion photos right now.
     ProcessMotionPhotos,
+
+    /// XMP face tags were enabled: import names and write the sidecars now.
+    XmpFaceTagsEnabled,
 }
 
 #[relm4::component(pub async)]
@@ -174,11 +180,26 @@ impl SimpleAsyncComponent for PreferencesDialog {
                     },
 
                     adw::SwitchRow {
+                        set_title: &fl!("prefs-processing-xmp-face-tags"),
+                        set_subtitle: &fl!("prefs-processing-xmp-face-tags", "subtitle"),
+
+                        #[watch]
+                        set_active: model.settings.xmp_face_tags,
+
+                        connect_active_notify[sender] => move |switch| {
+                            let _ = sender.input_sender().send(PreferencesInput::UpdateXmpFaceTags(switch.is_active()));
+                        },
+                    },
+
+                    adw::SwitchRow {
                         set_title: &fl!("prefs-processing-write-face-tags"),
                         set_subtitle: &fl!("prefs-processing-write-face-tags", "subtitle"),
 
                         #[watch]
                         set_active: model.settings.write_face_tags,
+
+                        #[watch]
+                        set_sensitive: model.settings.xmp_face_tags,
 
                         connect_active_notify[sender] => move |switch| {
                             let _ = sender.input_sender().send(PreferencesInput::UpdateWriteFaceTags(switch.is_active()));
@@ -263,6 +284,14 @@ impl SimpleAsyncComponent for PreferencesDialog {
                 info!("Update auto face recognition: {:?}", enable);
                 self.settings.face_recognition_auto = enable;
                 *self.settings_state.write() = self.settings.clone();
+            }
+            PreferencesInput::UpdateXmpFaceTags(enable) => {
+                info!("Update XMP face tags: {:?}", enable);
+                self.settings.xmp_face_tags = enable;
+                *self.settings_state.write() = self.settings.clone();
+                if enable {
+                    let _ = sender.output(PreferencesOutput::XmpFaceTagsEnabled);
+                }
             }
             PreferencesInput::UpdateWriteFaceTags(enable) => {
                 info!("Update write face tags: {:?}", enable);

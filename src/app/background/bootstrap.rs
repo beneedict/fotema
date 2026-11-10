@@ -239,11 +239,17 @@ impl Controllers {
                 info!("Queueing task to scan all pictures for faces");
                 self.add_task_photo_detect_faces();
                 self.add_task_photo_recognize_faces();
+                self.add_task_face_tag_export();
                 self.run_if_idle();
             }
             BootstrapInput::RescanForFaceTags => {
+                if !self.settings_state.read().xmp_face_tags {
+                    info!("XMP face tags are disabled; ignoring re-import request");
+                    return;
+                }
                 info!("Queueing task to re-import face tags from photo metadata");
                 self.add_task_rescan_face_tags();
+                self.add_task_face_tag_export();
                 self.run_if_idle();
             }
             BootstrapInput::RecognizeFacesNow => {
@@ -442,6 +448,9 @@ impl Controllers {
     fn add_task_rescan_face_tags(&mut self) {
         // User-initiated, so it runs regardless of the face-detection setting;
         // it is cheap when there are no detected faces to name.
+        if !self.settings_state.read().xmp_face_tags {
+            return;
+        }
         let sender = self.photo_recognize_faces_task.sender().clone();
         self.enqueue(Box::new(move || {
             sender.emit(PhotoRecognizeFacesTaskInput::RescanFaceTags)
@@ -452,8 +461,11 @@ impl Controllers {
     /// files.
     fn add_task_face_tag_export(&mut self) {
         let sender = self.face_tag_export_task.sender().clone();
-        let enable = self.settings_state.read().write_face_tags;
-        if enable {
+        let enabled = {
+            let settings = self.settings_state.read();
+            settings.xmp_face_tags && settings.write_face_tags
+        };
+        if enabled {
             self.enqueue(Box::new(move || sender.emit(FaceTagExportTaskInput::Start)));
         }
     }
@@ -609,6 +621,7 @@ impl Bootstrap {
                 stop.clone(),
                 photo_repo.clone(),
                 self.progress_monitor.clone(),
+                self.settings_state.clone(),
             ))
             .forward(sender.input_sender(), |msg| match msg {
                 PhotoEnrichTaskOutput::Started => {
@@ -751,6 +764,7 @@ impl Bootstrap {
                 cache_dir.clone(),
                 people_repo.clone(),
                 photo_repo.clone(),
+                self.settings_state.clone(),
                 self.progress_monitor.clone(),
             ))
             .forward(sender.input_sender(), |msg| match msg {
@@ -802,7 +816,12 @@ impl Bootstrap {
             });
 
         let face_tag_export_task = FaceTagExportTask::builder()
-            .detach_worker((stop.clone(), photo_repo.clone(), thumbnailer.clone()))
+            .detach_worker((
+                stop.clone(),
+                photo_repo.clone(),
+                thumbnailer.clone(),
+                self.settings_state.clone(),
+            ))
             .forward(sender.input_sender(), |msg| match msg {
                 FaceTagExportTaskOutput::Started => {
                     BootstrapInput::TaskStarted(TaskName::ExportFaceTags)
