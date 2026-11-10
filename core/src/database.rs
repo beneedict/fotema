@@ -13,6 +13,8 @@ refinery::embed_migrations!("migrations");
 
 /// Migrations that the fork applied under version numbers that upstream later
 /// uses for different migrations. The pair is (version, fork name).
+const FORK_MARKER_TABLE: &str = "fotema_fork_schema";
+
 const LEGACY_FORK_MIGRATIONS: &[(i32, &str)] = &[
     (25, "face_tags_imported"),
     (26, "pictures_face_tags"),
@@ -52,23 +54,42 @@ fn run_migrations(con: &mut Connection) -> Result<()> {
 /// 24 and above. When the embedded set uses those numbers for different
 /// migrations, the tolerant runner would treat them as already applied and
 /// would never run any later migration, because the database's highest version
-/// is above the embedded series. Rewrite the bookkeeping to the embedded names
-/// and checksums for the schema that the fork database already has. The schema
-/// checks decide whether a migration counts as applied, so this cannot skip a
-/// migration whose schema is missing. Extra fork-only columns and tables stay
-/// in place; they are harmless.
+/// is above the embedded series.
+///
+/// Rewrite the bookkeeping so that it follows the embedded migrations. A
+/// migration counts as applied when its schema is already present, so no
+/// migration whose schema is missing is skipped. Records of migrations that
+/// this build does not know (the fork-only ones) are removed; their schema
+/// stays in place and is harmless.
+///
+/// A small marker table remembers that this database came from the fork, so a
+/// partial upgrade through an intermediate set of migrations is also handled
+/// when a later build adds more migrations.
 fn reconcile_legacy_fork_history(con: &mut Connection, runner: &refinery::Runner) -> Result<()> {
     if !table_exists(con, "refinery_schema_history")? {
         return Ok(());
     }
 
-    let applied: HashMap<i32, String> = {
-        let mut stmt = con.prepare("SELECT version, name FROM refinery_schema_history")?;
+    let applied: HashMap<i32, (String, String)> = {
+        let mut stmt =
+            con.prepare("SELECT version, name, applied_on FROM refinery_schema_history")?;
         let rows = stmt.query_map([], |row| {
-            std::result::Result::Ok((row.get::<_, i32>(0)?, row.get::<_, String>(1)?))
+            std::result::Result::Ok((
+                row.get::<_, i32>(0)?,
+                (row.get::<_, String>(1)?, row.get::<_, String>(2)?),
+            ))
         })?;
         rows.flatten().collect()
     };
+
+    let is_legacy_fork = LEGACY_FORK_MIGRATIONS
+        .iter()
+        .all(|(version, name)| applied.get(version).is_some_and(|(got, _)| got == name))
+        || table_exists(con, FORK_MARKER_TABLE)?
+        || table_exists(con, "clip_embeddings")?;
+    if !is_legacy_fork {
+        return Ok(());
+    }
 
     let embedded: HashMap<i32, &refinery::Migration> = runner
         .get_migrations()
@@ -76,57 +97,49 @@ fn reconcile_legacy_fork_history(con: &mut Connection, runner: &refinery::Runner
         .map(|migration| (migration.version(), migration))
         .collect();
 
-    // Nothing to do when the recorded names already match this build.
-    let divergent = applied.iter().any(|(version, name)| {
-        embedded
-            .get(version)
-            .is_some_and(|migration| migration.name() != name)
-    });
-    if !divergent {
-        return Ok(());
-    }
-
-    // Only rewrite the known fork series. Any other divergence is left to the
-    // tolerant runner, which reports it in the log and keeps the library usable.
-    let is_legacy_fork = LEGACY_FORK_MIGRATIONS
-        .iter()
-        .all(|(version, name)| applied.get(version).is_some_and(|got| got == name));
-    if !is_legacy_fork {
-        return Ok(());
-    }
-
-    let mut to_mark: Vec<(i32, String, String)> = Vec::new();
-    for migration in embedded.values() {
-        if migration.version() < 24 || !schema_present(con, migration.name())? {
-            continue;
-        }
-        to_mark.push((
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut to_keep: Vec<(i32, String, String, String)> = Vec::new();
+    for migration in embedded.values().filter(|m| m.version() >= 24) {
+        let existing = applied.get(&migration.version());
+        // Keep an already applied migration under the embedded checksum. This
+        // covers migrations whose schema check this function does not know.
+        let applied_on = match existing {
+            Some((name, applied_on)) if name == migration.name() => applied_on.clone(),
+            _ if schema_present(con, migration.name())? => now.clone(),
+            // Not applied yet: the runner must run it.
+            _ => continue,
+        };
+        to_keep.push((
             migration.version(),
             migration.name().to_string(),
+            applied_on,
             migration.checksum().to_string(),
         ));
     }
 
     let tx = con.transaction()?;
+    tx.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS {FORK_MARKER_TABLE} (id INTEGER PRIMARY KEY CHECK (id = 1));
+         INSERT OR IGNORE INTO {FORK_MARKER_TABLE} (id) VALUES (1);"
+    ))?;
     tx.execute(
         "DELETE FROM refinery_schema_history WHERE version >= 24",
         [],
     )?;
-    let applied_on = chrono::Utc::now().to_rfc3339();
     {
         let mut insert = tx.prepare(
             "INSERT INTO refinery_schema_history (version, name, applied_on, checksum)
              VALUES (?1, ?2, ?3, ?4)",
         )?;
-        for (version, name, checksum) in &to_mark {
+        for (version, name, applied_on, checksum) in &to_keep {
             insert.execute(params![version, name, applied_on, checksum])?;
         }
     }
     tx.commit()?;
 
     tracing::info!(
-        "Reconciled {} fork migration record(s) with the embedded migration series",
-        to_mark.len()
+        "Reconciled fork migration history with the embedded migration series ({} record(s))",
+        to_keep.len()
     );
     Ok(())
 }
