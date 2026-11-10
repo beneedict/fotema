@@ -82,6 +82,26 @@ fn reconcile_legacy_fork_history(con: &mut Connection, runner: &refinery::Runner
         rows.flatten().collect()
     };
 
+    let embedded: HashMap<i32, &refinery::Migration> = runner
+        .get_migrations()
+        .iter()
+        .map(|migration| (migration.version(), migration))
+        .collect();
+
+    // Nothing to rewrite when every recorded migration already matches the
+    // embedded series, and no extra (fork-only) record is left.
+    let clean = applied.iter().all(|(version, (name, _))| {
+        embedded
+            .get(version)
+            .is_some_and(|migration| migration.name() == name)
+    }) && embedded
+        .values()
+        .filter(|migration| migration.version() >= 24)
+        .all(|migration| applied.contains_key(&migration.version()));
+    if clean {
+        return Ok(());
+    }
+
     let is_legacy_fork = LEGACY_FORK_MIGRATIONS
         .iter()
         .all(|(version, name)| applied.get(version).is_some_and(|(got, _)| got == name))
@@ -90,12 +110,6 @@ fn reconcile_legacy_fork_history(con: &mut Connection, runner: &refinery::Runner
     if !is_legacy_fork {
         return Ok(());
     }
-
-    let embedded: HashMap<i32, &refinery::Migration> = runner
-        .get_migrations()
-        .iter()
-        .map(|migration| (migration.version(), migration))
-        .collect();
 
     let now = chrono::Utc::now().to_rfc3339();
     let mut to_keep: Vec<(i32, String, String, String)> = Vec::new();
