@@ -70,6 +70,14 @@ people-page-status-off =
   .notice = { -app-name } must download about 45 megabytes of data to recognize faces and people.
   .enable = Enable
 
+# Toggle button to show hidden (ignored) people.
+people-show-ignored = Show ignored
+
+# Status page shown when the ignored-people view is empty.
+people-page-status-no-ignored =
+  .title = No ignored people
+  .description = People you ignore are hidden here so you can restore them later.
+
 # Status page shown for people album when no people are found.
 people-page-status-no-people =
   .title = No people found
@@ -389,6 +397,9 @@ primary-menu-about = About {-app-name}
 
 # Menu item to rename a person
 person-menu-rename = Rename person
+
+# Menu item to hide or restore a person
+person-menu-ignore = Hide / restore person
 
 # Menu item to delete a person
 person-menu-delete = Delete person

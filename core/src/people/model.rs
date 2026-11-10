@@ -49,6 +49,10 @@ pub struct Person {
     pub name: String,
     pub small_thumbnail_path: Option<PathBuf>,
     pub large_thumbnail_path: Option<PathBuf>,
+
+    /// Whether the user has hidden this person. Reversible; face assignments
+    /// are kept.
+    pub is_ignored: bool,
 }
 
 impl Person {

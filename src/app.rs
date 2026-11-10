@@ -283,6 +283,9 @@ pub(super) enum AppMsg {
     /// A face was named in the Unknown People view.
     FacesChanged,
 
+    /// A person was hidden or restored.
+    PersonIgnoredChanged,
+
     // A background task has started.
     TaskStarted(TaskName),
 
@@ -778,6 +781,7 @@ impl SimpleAsyncComponent for App {
                 PersonAlbumOutput::Selected(id, filter) => AppMsg::View(id, filter),
                 PersonAlbumOutput::Deleted => AppMsg::PersonDeleted,
                 PersonAlbumOutput::Renamed => AppMsg::PersonRenamed,
+                PersonAlbumOutput::IgnoredChanged => AppMsg::PersonIgnoredChanged,
             });
 
         state.subscribe(person_album.sender(), |_| PersonAlbumInput::Refresh);
@@ -1050,6 +1054,11 @@ impl SimpleAsyncComponent for App {
                 self.faces_page.emit(UnknownPeopleInput::Refresh);
             }
             AppMsg::PersonRenamed => {
+                self.people_page.emit(PeopleAlbumInput::Refresh);
+                self.faces_page.emit(UnknownPeopleInput::Refresh);
+            }
+            AppMsg::PersonIgnoredChanged => {
+                self.picture_navigation_view.pop();
                 self.people_page.emit(PeopleAlbumInput::Refresh);
                 self.faces_page.emit(UnknownPeopleInput::Refresh);
             }

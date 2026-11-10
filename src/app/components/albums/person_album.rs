@@ -43,6 +43,9 @@ relm4::new_stateless_action!(RenameAction, PersonActionGroup, "rename");
 // Delete a person
 relm4::new_stateless_action!(DeleteAction, PersonActionGroup, "delete");
 
+// Hide or restore a person
+relm4::new_stateless_action!(IgnoreAction, PersonActionGroup, "ignore");
+
 #[derive(Debug)]
 pub enum PersonAlbumInput {
     /// Album is visible
@@ -72,6 +75,9 @@ pub enum PersonAlbumInput {
     /// Start delete person flow.
     DeleteDialog,
 
+    /// Hide or restore this person.
+    Ignore,
+
     /// Actually delete person.
     Delete,
 
@@ -88,6 +94,9 @@ pub enum PersonAlbumOutput {
 
     /// Person renamed.
     Renamed,
+
+    /// Person hidden or restored.
+    IgnoredChanged,
 }
 
 pub struct PersonAlbum {
@@ -112,6 +121,7 @@ impl SimpleComponent for PersonAlbum {
             section! {
                 // FIXME I would like to have the person's name in these menu items.
                 &fl!("person-menu-rename") => RenameAction,
+                &fl!("person-menu-ignore") => IgnoreAction,
                 &fl!("person-menu-delete") => DeleteAction,
             }
         }
@@ -203,7 +213,15 @@ impl SimpleComponent for PersonAlbum {
             })
         };
 
+        let ignore_action = {
+            let sender = sender.clone();
+            RelmAction::<IgnoreAction>::new_stateless(move |_| {
+                sender.input(PersonAlbumInput::Ignore);
+            })
+        };
+
         actions.add_action(rename_action);
+        actions.add_action(ignore_action);
         actions.add_action(delete_action);
         actions.register_for_widget(&root);
 
@@ -357,6 +375,22 @@ impl SimpleComponent for PersonAlbum {
                 self.title.set_label(&name);
                 person.name = name;
                 let _ = sender.output(PersonAlbumOutput::Renamed);
+            }
+            PersonAlbumInput::Ignore => {
+                let Some(ref person) = self.person else {
+                    return;
+                };
+                let ignored = !person.is_ignored;
+                let mut repo = self.repo.clone();
+                match repo.set_person_ignored(person.person_id, ignored) {
+                    Ok(()) => {
+                        let mut person = person.clone();
+                        person.is_ignored = ignored;
+                        self.person = Some(person);
+                        let _ = sender.output(PersonAlbumOutput::IgnoredChanged);
+                    }
+                    Err(e) => error!("Failed to update person visibility: {}", e),
+                }
             }
             PersonAlbumInput::DeleteDialog => {
                 let Some(ref person) = self.person else {

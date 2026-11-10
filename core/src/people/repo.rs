@@ -162,6 +162,7 @@ impl Repository {
             "SELECT
                 p.person_id AS person_id,
                 p.name AS person_name,
+                p.is_ignored AS is_ignored,
                 f.thumbnail_path AS person_thumbnail_path
             FROM people AS p
             LEFT OUTER JOIN pictures_faces AS f
@@ -218,24 +219,45 @@ impl Repository {
     }
 
     pub fn all_people(&self) -> Result<Vec<model::Person>> {
+        self.people_by_ignored(false)
+    }
+
+    /// People the user has hidden. Their data and face assignments are kept.
+    pub fn all_ignored_people(&self) -> Result<Vec<model::Person>> {
+        self.people_by_ignored(true)
+    }
+
+    fn people_by_ignored(&self, is_ignored: bool) -> Result<Vec<model::Person>> {
         let con = self.con.lock().unwrap();
         let mut stmt = con.prepare(
             "SELECT
                 p.person_id AS person_id,
                 p.name AS person_name,
+                p.is_ignored AS is_ignored,
                 f.thumbnail_path AS person_thumbnail_path
             FROM people AS p
             LEFT OUTER JOIN pictures_faces AS f
                 ON (f.person_id = p.person_id AND f.is_thumbnail = TRUE)
+            WHERE p.is_ignored = ?1
             ORDER BY name ASC",
         )?;
 
         let result: Vec<model::Person> = stmt
-            .query_map([], |row| self.to_person(row))?
+            .query_map([is_ignored], |row| self.to_person(row))?
             .flatten()
             .collect();
 
         Ok(result)
+    }
+
+    /// Hide or restore a whole person. Reversible and data-preserving.
+    pub fn set_person_ignored(&mut self, person_id: PersonId, ignored: bool) -> Result<()> {
+        let con = self.con.lock().unwrap();
+        con.execute(
+            "UPDATE people SET is_ignored = ?2 WHERE person_id = ?1",
+            params![person_id.id(), ignored],
+        )?;
+        Ok(())
     }
 
     /// Find a person by exact name (case-insensitive).
@@ -585,6 +607,7 @@ impl Repository {
              FROM pictures_faces AS faces
              INNER JOIN people USING (person_id)
              WHERE faces.is_confirmed = TRUE
+               AND people.is_ignored = FALSE
                AND length(faces.embedding) = 2048",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -1087,6 +1110,7 @@ impl Repository {
                 name,
                 small_thumbnail_path: person_thumbnail_path,
                 large_thumbnail_path: large_thumbnail_path,
+                is_ignored: row.get("is_ignored").unwrap_or(false),
             })
         } else {
             None
@@ -1121,11 +1145,14 @@ impl Repository {
             None
         };
 
+        let is_ignored = row.get("is_ignored").unwrap_or(false);
+
         std::result::Result::Ok(model::Person {
             person_id,
             name,
             small_thumbnail_path,
             large_thumbnail_path,
+            is_ignored,
         })
     }
 
