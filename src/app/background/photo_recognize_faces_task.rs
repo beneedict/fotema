@@ -344,7 +344,8 @@ impl PhotoRecognizeFacesTask {
             processed.push(picture_id);
             let regions = photo::face_tags::read_face_tags(&path.sandbox_path);
             let size_of = self.detection_size_for(&path, orientation);
-            imported += Self::assign_regions(faces, regions, &size_of, &mut people_repo, &negatives);
+            imported +=
+                Self::assign_regions(faces, regions, &size_of, &mut people_repo, &negatives);
         }
 
         if !processed.is_empty() {
