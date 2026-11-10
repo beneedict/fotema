@@ -198,6 +198,7 @@ impl PhotoRecognizeFacesTask {
         regions: Vec<photo::face_tags::FaceTag>,
         size_of: &dyn Fn(&fotema_core::people::model::DetectedFace) -> Option<(f32, f32)>,
         people_repo: &mut people::Repository,
+        negatives: &std::collections::HashMap<i64, std::collections::HashSet<i64>>,
     ) -> usize {
         if regions.is_empty() || faces.is_empty() {
             return 0;
@@ -212,6 +213,13 @@ impl PhotoRecognizeFacesTask {
             }
             let result = match people_repo.find_person_id_by_name(name) {
                 Ok(Some(person_id)) => {
+                    // Respect a prior "not this person" correction.
+                    if negatives
+                        .get(&face.face_id.id())
+                        .is_some_and(|rejected| rejected.contains(&person_id.id()))
+                    {
+                        continue;
+                    }
                     people_repo.mark_as_person_unconfirmed(face.face_id, person_id)
                 }
                 Ok(None) => people_repo.add_person_unconfirmed(face.face_id, name),
@@ -325,6 +333,7 @@ impl PhotoRecognizeFacesTask {
         }
 
         let mut people_repo = self.repo.clone();
+        let negatives = self.repo.find_negative_associations().unwrap_or_default();
         let mut processed: Vec<PictureId> = Vec::with_capacity(groups.len());
         let mut imported = 0usize;
 
@@ -335,7 +344,7 @@ impl PhotoRecognizeFacesTask {
             processed.push(picture_id);
             let regions = photo::face_tags::read_face_tags(&path.sandbox_path);
             let size_of = self.detection_size_for(&path, orientation);
-            imported += Self::assign_regions(faces, regions, &size_of, &mut people_repo);
+            imported += Self::assign_regions(faces, regions, &size_of, &mut people_repo, &negatives);
         }
 
         if !processed.is_empty() {
@@ -374,14 +383,22 @@ impl PhotoRecognizeFacesTask {
             .filter(|face| face.detected_at > min_recognized_at)
             .collect::<Vec<_>>();
 
+        // "This face is NOT person X" corrections, so a rejected pair is never
+        // re-assigned by a later recognition pass.
+        let negatives = self.repo.find_negative_associations().unwrap_or_default();
+
         let assignments: Vec<(fotema_core::FaceId, fotema_core::PersonId)> = unnamed
             .par_iter()
             .take_any_while(|_| !self.stop.load(Ordering::Relaxed))
             .filter_map(|face| {
+                let rejected = negatives.get(&face.face_id.id());
                 let mut best: Option<(fotema_core::PersonId, f32)> = None;
                 for reference in references {
                     // Only match against people known before this face was detected.
                     if reference.recognized_at > face.detected_at {
+                        continue;
+                    }
+                    if rejected.is_some_and(|set| set.contains(&reference.person_id.id())) {
                         continue;
                     }
                     let score = people::Repository::cosine_normalized(
