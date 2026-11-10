@@ -389,6 +389,7 @@ banner-stopping = Stopping tasks...
 
 # Menu item to show preferences dialog
 primary-menu-preferences = Preferences
+primary-menu-scan-face-tags = Re-import face names from photos
 
 # Menu item to show "about" dialog
 primary-menu-about = About {-app-name}

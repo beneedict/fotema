@@ -946,6 +946,38 @@ impl Repository {
         Ok(())
     }
 
+    /// Create an unconfirmed person from a face and a name (used for XMP import;
+    /// the user can confirm or correct the assignment later).
+    pub fn add_person_unconfirmed(&mut self, face_id: FaceId, name: &str) -> Result<()> {
+        let mut con = self.con.lock().unwrap();
+        let tx = con.transaction()?;
+
+        {
+            let mut insert_person = tx.prepare_cached(
+                "INSERT INTO people (name)
+                 SELECT ?1 AS name
+                 FROM pictures_faces
+                 WHERE face_id = ?2 AND person_id IS NULL",
+            )?;
+            insert_person.execute(params![name, face_id.id()])?;
+            let person_id = tx.last_insert_rowid();
+            if person_id == 0 {
+                warn!("Detected double insert of person. Skipping.");
+                return Ok(());
+            }
+
+            let mut update_face = tx.prepare_cached(
+                "UPDATE pictures_faces
+                 SET person_id = ?2, is_confirmed = FALSE, is_thumbnail = TRUE
+                 WHERE face_id = ?1",
+            )?;
+            update_face.execute(params![face_id.id(), person_id])?;
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
     /// User is manually marking a face as a person
     pub fn mark_as_person(&mut self, face_id: FaceId, person_id: PersonId) -> Result<()> {
         let mut con = self.con.lock().unwrap();

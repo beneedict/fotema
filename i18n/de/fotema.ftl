@@ -206,6 +206,7 @@ banner-extract-motion-photos = Bewegungsfotos werden verarbeitet.
 
 # Menu item to show preferences dialog
 primary-menu-preferences = Einstellungen
+primary-menu-scan-face-tags = Personennamen aus Fotos neu importieren
 # Menu item to show "about" dialog
 primary-menu-about = Info zu { -app-name }
 people-person-search =

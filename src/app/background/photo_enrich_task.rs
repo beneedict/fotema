@@ -5,6 +5,7 @@
 use anyhow::*;
 use fotema_core::photo::metadata;
 use rayon::prelude::*;
+use relm4::Reducer;
 use relm4::Worker;
 use relm4::prelude::*;
 
@@ -12,6 +13,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tracing::{error, info};
+
+use crate::app::components::progress_monitor::{
+    MediaType, ProgressMonitor, ProgressMonitorInput, TaskName,
+};
 
 #[derive(Debug)]
 pub enum PhotoEnrichTaskInput {
@@ -33,12 +38,15 @@ pub struct PhotoEnrichTask {
 
     // Danger! Don't hold the repo mutex for too long as it blocks viewing images.
     repo: fotema_core::photo::Repository,
+
+    progress_monitor: Arc<Reducer<ProgressMonitor>>,
 }
 
 impl PhotoEnrichTask {
     fn enrich(
         stop: Arc<AtomicBool>,
         mut repo: fotema_core::photo::Repository,
+        progress_monitor: Arc<Reducer<ProgressMonitor>>,
         sender: &ComponentSender<PhotoEnrichTask>,
     ) -> Result<()> {
         let start = std::time::Instant::now();
@@ -56,17 +64,43 @@ impl PhotoEnrichTask {
         }
 
         let _ = sender.output(PhotoEnrichTaskOutput::Started);
+        progress_monitor.emit(ProgressMonitorInput::Start(
+            TaskName::Enrich(MediaType::Photo),
+            count,
+        ));
 
-        let metadatas = unprocessed
+        // Read EXIF metadata and embedded XMP face-region person tags in a
+        // single file read per photo.
+        let enriched: Vec<_> = unprocessed
             .par_iter()
             .take_any_while(|_| !stop.load(Ordering::Relaxed))
             .flat_map(|pic| {
-                let result = metadata::from_path(&pic.sandbox_path());
-                result.map(|m| (pic.picture_id, m))
+                let result = metadata::from_path_with_face_tags(&pic.sandbox_path())
+                    .map_err(|e| {
+                        tracing::warn!(
+                            "Failed to extract metadata for {:?}: {}",
+                            pic.sandbox_path(),
+                            e
+                        )
+                    })
+                    .ok()
+                    .map(|(m, tags)| (pic.picture_id, m, tags));
+                progress_monitor.emit(ProgressMonitorInput::Advance);
+                result
             })
             .collect();
 
+        let mut metadatas = Vec::with_capacity(enriched.len());
+        let mut face_tags = Vec::with_capacity(enriched.len());
+        for (picture_id, meta, tags) in enriched {
+            metadatas.push((picture_id, meta));
+            face_tags.push((picture_id, tags));
+        }
+
         repo.add_metadatas(metadatas)?;
+        repo.add_face_tags(&face_tags)?;
+
+        progress_monitor.emit(ProgressMonitorInput::Complete);
 
         info!(
             "Extracted {} photo metadatas in {} seconds.",
@@ -83,12 +117,20 @@ impl PhotoEnrichTask {
 }
 
 impl Worker for PhotoEnrichTask {
-    type Init = (Arc<AtomicBool>, fotema_core::photo::Repository);
+    type Init = (
+        Arc<AtomicBool>,
+        fotema_core::photo::Repository,
+        Arc<Reducer<ProgressMonitor>>,
+    );
     type Input = PhotoEnrichTaskInput;
     type Output = PhotoEnrichTaskOutput;
 
-    fn init((stop, repo): Self::Init, _sender: ComponentSender<Self>) -> Self {
-        PhotoEnrichTask { stop, repo }
+    fn init((stop, repo, progress_monitor): Self::Init, _sender: ComponentSender<Self>) -> Self {
+        PhotoEnrichTask {
+            stop,
+            repo,
+            progress_monitor,
+        }
     }
 
     fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>) {
@@ -97,11 +139,15 @@ impl Worker for PhotoEnrichTask {
                 info!("Enriching photos...");
                 let repo = self.repo.clone();
                 let stop = self.stop.clone();
+                let progress_monitor = self.progress_monitor.clone();
 
                 // Avoid runtime panic from calling block_on
                 rayon::spawn(move || {
-                    if let Err(e) = PhotoEnrichTask::enrich(stop, repo, &sender) {
+                    if let Err(e) = PhotoEnrichTask::enrich(stop, repo, progress_monitor, &sender) {
                         error!("Failed to update previews: {}", e);
+                        // enrich() failed before sending Completed; signal it
+                        // anyway so the bootstrap task queue keeps advancing.
+                        let _ = sender.output(PhotoEnrichTaskOutput::Completed(0));
                     }
                 });
             }

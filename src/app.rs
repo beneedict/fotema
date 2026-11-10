@@ -280,6 +280,9 @@ pub(super) enum AppMsg {
 
     PersonRenamed,
 
+    /// Re-import person names from XMP metadata across the library.
+    RescanFaceTags,
+
     /// A face was named in the Unknown People view.
     FacesChanged,
 
@@ -318,6 +321,7 @@ pub(super) enum AppMsg {
 relm4::new_action_group!(pub(super) WindowActionGroup, "win");
 relm4::new_stateless_action!(PreferencesAction, WindowActionGroup, "preferences");
 relm4::new_stateless_action!(AboutAction, WindowActionGroup, "about");
+relm4::new_stateless_action!(ScanFaceTagsAction, WindowActionGroup, "scan-face-tags");
 
 #[relm4::component(pub async)]
 impl SimpleAsyncComponent for App {
@@ -330,6 +334,7 @@ impl SimpleAsyncComponent for App {
         primary_menu: {
             section! {
                 &fl!("primary-menu-preferences") => PreferencesAction,
+                &fl!("primary-menu-scan-face-tags") => ScanFaceTagsAction,
                 &fl!("primary-menu-about") => AboutAction,
             }
         }
@@ -918,8 +923,16 @@ impl SimpleAsyncComponent for App {
             })
         };
 
+        let scan_face_tags_action = {
+            let sender = sender.clone();
+            RelmAction::<ScanFaceTagsAction>::new_stateless(move |_| {
+                sender.input(AppMsg::RescanFaceTags);
+            })
+        };
+
         actions.add_action(about_action);
         actions.add_action(preferences_action);
+        actions.add_action(scan_face_tags_action);
 
         actions.register_for_widget(&widgets.main_window);
 
@@ -1142,6 +1155,10 @@ impl SimpleAsyncComponent for App {
             AppMsg::ProcessMotionPhotos => {
                 info!("Process motion photos");
                 self.bootstrap.emit(BootstrapInput::ProcessMotionPhotos);
+            }
+            AppMsg::RescanFaceTags => {
+                info!("Re-import face tags from photo metadata");
+                self.bootstrap.emit(BootstrapInput::RescanForFaceTags);
             }
             AppMsg::StopBackgroundTasks => {
                 info!("Stop all background tasks");

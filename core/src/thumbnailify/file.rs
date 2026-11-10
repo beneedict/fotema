@@ -48,6 +48,16 @@ pub fn get_thumbnail_hash_output(
     path
 }
 
+/// Find the thumbnail file for the given hash and size, if it exists.
+pub fn find_existing_thumbnail(
+    thumbnails_base_dir: &Path,
+    hash: &str,
+    size: ThumbnailSize,
+) -> Option<PathBuf> {
+    let path = get_thumbnail_hash_output(thumbnails_base_dir, hash, size);
+    path.exists().then_some(path)
+}
+
 /// Checks whether the thumbnail file at `thumb_path` is up to date with respect
 /// to the source image at `source_path`. It verifies two metadata fields in the PNG:
 ///

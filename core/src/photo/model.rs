@@ -111,6 +111,18 @@ pub enum Orientation {
 }
 
 impl Orientation {
+    /// True when the orientation turns the picture by 90 degrees, so the width
+    /// of the file is the height of the picture that the user sees.
+    pub fn swaps_sides(self) -> bool {
+        matches!(
+            self,
+            Orientation::WestMirrored
+                | Orientation::West
+                | Orientation::EastMirrored
+                | Orientation::East
+        )
+    }
+
     pub fn from_degrees(degrees: i32) -> Self {
         match degrees {
             0 => Orientation::North,

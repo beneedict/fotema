@@ -113,6 +113,9 @@ pub enum BootstrapInput {
     ScanPictureForFaces(PictureId),
     ScanPicturesForFaces,
 
+    /// Re-import person names from photo XMP metadata.
+    RescanForFaceTags,
+
     /// Queue task for transcoding videos
     TranscodeAll,
 
@@ -216,6 +219,14 @@ impl Controllers {
                 info!("Queueing task to scan all pictures for faces");
                 self.add_task_photo_detect_faces();
                 self.add_task_photo_recognize_faces();
+                self.run_if_idle();
+            }
+            BootstrapInput::RescanForFaceTags => {
+                info!("Queueing task to re-import face tags from photo metadata");
+                let sender = self.photo_recognize_faces_task.sender().clone();
+                self.enqueue(Box::new(move || {
+                    sender.emit(PhotoRecognizeFacesTaskInput::RescanFaceTags)
+                }));
                 self.run_if_idle();
             }
             BootstrapInput::TranscodeAll => {
@@ -504,7 +515,11 @@ impl Bootstrap {
             });
 
         let photo_enrich_task = PhotoEnrichTask::builder()
-            .detach_worker((stop.clone(), photo_repo.clone()))
+            .detach_worker((
+                stop.clone(),
+                photo_repo.clone(),
+                self.progress_monitor.clone(),
+            ))
             .forward(sender.input_sender(), |msg| match msg {
                 PhotoEnrichTaskOutput::Started => {
                     BootstrapInput::TaskStarted(TaskName::Enrich(MediaType::Photo))
@@ -645,6 +660,8 @@ impl Bootstrap {
                 stop.clone(),
                 cache_dir.clone(),
                 people_repo.clone(),
+                photo_repo.clone(),
+                thumbnailer.clone(),
                 self.progress_monitor.clone(),
             ))
             .forward(sender.input_sender(), |msg| match msg {

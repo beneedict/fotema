@@ -60,6 +60,11 @@ impl Thumbnailer {
         file::get_thumbnail_path(&self.thumbnails_path, host_path, size)
     }
 
+    /// The path of the thumbnail of the given size, when the file exists.
+    pub fn existing_thumbnail(&self, hash: &str, size: ThumbnailSize) -> Option<PathBuf> {
+        file::find_existing_thumbnail(&self.thumbnails_path, hash, size)
+    }
+
     /**
      * Compute thumbnail path, or sensible fallback if preferred size does not exist.
      * If no thumbnails exist, then return preferred path pointing to absent file.
