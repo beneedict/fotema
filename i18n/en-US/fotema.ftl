@@ -47,6 +47,22 @@ faces-page-empty =
   .title = No unnamed faces
   .description = Name detected faces to create a person album.
 
+# Button to ignore (hide) the selected unnamed face(s).
+unknown-people-ignore-face = Ignore face
+  .tooltip = Hide the selected face(s) — for non-faces or people you don't want to name.
+
+# Toggle to switch the grid to the ignored faces (so they can be restored).
+unknown-people-show-ignored = Show ignored
+
+# Button to restore the selected ignored face(s) back to the unknown list.
+unknown-people-restore-face = Restore face
+  .tooltip = Bring the selected ignored face(s) back into the unknown-faces list.
+
+# Empty state for the ignored-faces view.
+unknown-people-no-ignored =
+  .title = No ignored faces
+  .description = Faces you ignore are hidden here so you can restore them later.
+
 # Status page shown for people album when face detection is disabled.
 people-page-status-off =
   .title = Enable face detection?
@@ -217,6 +233,13 @@ people-set-name = Set name
 # search for an existing person.
 people-person-search =
         .placeholder = Person name
+
+# Shown when several faces are selected to be named at once.
+people-selected-count = { $count } faces selected
+
+# Button under the suggestions list to assign the selected face(s) to the
+# highlighted (or typed) person.
+people-assign-button = Assign person
 
 # Menu item to ignore a face match because it is a random face or not a face.
 people-face-ignore = Ignore
