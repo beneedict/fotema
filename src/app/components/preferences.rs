@@ -87,7 +87,6 @@ pub enum PreferencesOutput {
     /// Write the current person names to sidecar files right now.
     WriteFaceTags,
 }
-}
 
 #[relm4::component(pub async)]
 impl SimpleAsyncComponent for PreferencesDialog {
