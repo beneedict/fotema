@@ -230,7 +230,10 @@ impl PhotoRecognizeFacesTask {
         mut faces: Vec<fotema_core::people::model::DetectedFace>,
         mut regions: Vec<photo::face_tags::FaceTag>,
         size_of: &dyn Fn(&fotema_core::people::model::DetectedFace) -> Option<(f32, f32)>,
-    ) -> Vec<(photo::face_tags::FaceTag, fotema_core::people::model::DetectedFace)> {
+    ) -> Vec<(
+        photo::face_tags::FaceTag,
+        fotema_core::people::model::DetectedFace,
+    )> {
         const MIN_OVERLAP: f32 = 0.3;
 
         let with_area = regions.iter().all(|r| r.area.is_some());
@@ -302,9 +305,7 @@ impl PhotoRecognizeFacesTask {
         orientation: Option<Orientation>,
     ) -> impl Fn(&fotema_core::people::model::DetectedFace) -> Option<(f32, f32)> + use<> {
         let size = DetectionSize::new(&self.thumbnailer, path, orientation);
-        move |face: &fotema_core::people::model::DetectedFace| {
-            size.size_of(face.is_source_original)
-        }
+        move |face: &fotema_core::people::model::DetectedFace| size.size_of(face.is_source_original)
     }
 
     /// Read XMP names and assign them to the matching unnamed faces. Runs at
