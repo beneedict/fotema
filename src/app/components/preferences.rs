@@ -63,6 +63,9 @@ pub enum PreferencesInput {
     /// Enable or disable reading and writing XMP face tags.
     UpdateXmpFaceTags(bool),
 
+    /// Write confirmed person names to XMP sidecar files.
+    UpdateWriteFaceTags(bool),
+
     Sort(AlbumSort),
 
     ChoosePicturesDir,
@@ -80,6 +83,10 @@ pub enum PreferencesOutput {
 
     /// XMP face tags were enabled: import names from the photos now.
     XmpFaceTagsEnabled,
+
+    /// Write the current person names to sidecar files right now.
+    WriteFaceTags,
+}
 }
 
 #[relm4::component(pub async)]
@@ -186,6 +193,21 @@ impl SimpleAsyncComponent for PreferencesDialog {
                         },
                     },
 
+                    adw::SwitchRow {
+                        set_title: &fl!("prefs-processing-write-face-tags"),
+                        set_subtitle: &fl!("prefs-processing-write-face-tags", "subtitle"),
+
+                        #[watch]
+                        set_active: model.settings.write_face_tags,
+
+                        #[watch]
+                        set_sensitive: model.settings.xmp_face_tags,
+
+                        connect_active_notify[sender] => move |switch| {
+                            let _ = sender.input_sender().send(PreferencesInput::UpdateWriteFaceTags(switch.is_active()));
+                        },
+                    },
+
                 },
             }
         }
@@ -262,6 +284,14 @@ impl SimpleAsyncComponent for PreferencesDialog {
                 *self.settings_state.write() = self.settings.clone();
                 if enable {
                     let _ = sender.output(PreferencesOutput::ProcessMotionPhotos);
+                }
+            }
+            PreferencesInput::UpdateWriteFaceTags(enable) => {
+                info!("Update write face tags: {:?}", enable);
+                self.settings.write_face_tags = enable;
+                *self.settings_state.write() = self.settings.clone();
+                if enable {
+                    let _ = sender.output(PreferencesOutput::WriteFaceTags);
                 }
             }
             PreferencesInput::UpdateFaceDetectionMode(mode) => {

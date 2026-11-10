@@ -42,5 +42,9 @@
       <default>false</default>
       <summary>Read and write person names in photo XMP sidecar files. When off, Fotema ignores XMP face tags completely.</summary>
     </key>
+    <key name="write-face-tags" type="b">
+      <default>true</default>
+      <summary>Write confirmed person names to the XMP sidecar file of each photo.</summary>
+    </key>
   </schema>
 </schemalist>

@@ -4,6 +4,7 @@
 
 pub mod bootstrap;
 
+pub mod face_tag_export_task;
 pub mod library_scan_task;
 pub mod load_library_task;
 

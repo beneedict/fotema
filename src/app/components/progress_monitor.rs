@@ -28,6 +28,7 @@ pub enum TaskName {
     MotionPhoto,
     DetectFaces,
     RecognizeFaces,
+    ExportFaceTags,
 
     /// FIXME figure out if 'Idle' will be used.
     Idle,

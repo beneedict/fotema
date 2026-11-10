@@ -42,6 +42,15 @@ pub struct UnnamedEmbedding {
     pub embedding: Vec<f32>,
 }
 
+/// The statement that clears the sidecar marker of the picture that holds a
+/// face. The next export run then writes that picture's sidecar again.
+const CLEAR_EXPORT_BY_FACE: &str = "UPDATE pictures SET face_tags_exported = 0
+     WHERE picture_id IN (SELECT picture_id FROM pictures_faces WHERE face_id = ?1)";
+
+/// The same, for every picture that holds a face of a person.
+const CLEAR_EXPORT_BY_PERSON: &str = "UPDATE pictures SET face_tags_exported = 0
+     WHERE picture_id IN (SELECT picture_id FROM pictures_faces WHERE person_id = ?1)";
+
 /// Repository of people data.
 /// Repository is backed by a Sqlite database.
 #[derive(Debug, Clone)]
@@ -86,6 +95,13 @@ impl Repository {
         )?;
 
         stmt.execute([picture_id.id()])?;
+        drop(stmt);
+
+        // The faces of the sidecar may change too, so write it again.
+        con.execute(
+            "UPDATE pictures SET face_tags_exported = 0 WHERE picture_id = ?1",
+            [picture_id.id()],
+        )?;
 
         Ok(())
     }
@@ -182,6 +198,10 @@ impl Repository {
         let mut con = self.con.lock().unwrap();
         let tx = con.transaction()?;
 
+        // The person is deleted, so every picture that held a face of them has
+        // a sidecar that is out of date.
+        tx.execute(CLEAR_EXPORT_BY_PERSON, params![person_id.id()])?;
+
         {
             let mut stmt = tx.prepare_cached(
                 "UPDATE pictures_faces
@@ -203,6 +223,9 @@ impl Repository {
     pub fn rename_person(&mut self, person_id: PersonId, name: &str) -> Result<()> {
         let mut con = self.con.lock().unwrap();
         let tx = con.transaction()?;
+
+        // Every picture of this person now holds the wrong name in its sidecar.
+        tx.execute(CLEAR_EXPORT_BY_PERSON, params![person_id.id()])?;
 
         {
             let mut stmt = tx.prepare_cached(
@@ -253,6 +276,10 @@ impl Repository {
     /// Hide or restore a whole person. Reversible and data-preserving.
     pub fn set_person_ignored(&mut self, person_id: PersonId, ignored: bool) -> Result<()> {
         let con = self.con.lock().unwrap();
+
+        // An ignored person must not appear in a sidecar, so write them again.
+        con.execute(CLEAR_EXPORT_BY_PERSON, params![person_id.id()])?;
+
         con.execute(
             "UPDATE people SET is_ignored = ?2 WHERE person_id = ?1",
             params![person_id.id(), ignored],
@@ -741,6 +768,10 @@ impl Repository {
         let mut con = self.con.lock().unwrap();
         let tx = con.transaction()?;
 
+        // The confirmed person link of this face is removed, so the sidecar
+        // is out of date.
+        tx.execute(CLEAR_EXPORT_BY_FACE, params![face_id.id()])?;
+
         {
             let mut stmt = tx.prepare_cached(
                 "UPDATE pictures_faces
@@ -983,6 +1014,9 @@ impl Repository {
         let mut con = self.con.lock().unwrap();
         let tx = con.transaction()?;
 
+        // The names of this picture changed, so the sidecar is out of date.
+        tx.execute(CLEAR_EXPORT_BY_FACE, params![face_id.id()])?;
+
         {
             let mut stmt = tx.prepare_cached(
                 "UPDATE pictures_faces
@@ -1047,6 +1081,9 @@ impl Repository {
     pub fn mark_not_person(&mut self, face_id: FaceId) -> Result<()> {
         let mut con = self.con.lock().unwrap();
         let tx = con.transaction()?;
+
+        // The names of this picture changed, so the sidecar is out of date.
+        tx.execute(CLEAR_EXPORT_BY_FACE, params![face_id.id()])?;
 
         {
             let mut stmt = tx.prepare_cached(

@@ -6,7 +6,7 @@ use crate::FlatpakPathBuf;
 use crate::ScannedFile;
 use crate::path_encoding;
 use crate::people::model::{DetectedFace, FaceDetectionCandidate, FaceId, Rect};
-use crate::photo::model::{Orientation, Picture, PictureId};
+use crate::photo::model::{ExportFace, FaceTagExportPicture, Orientation, Picture, PictureId};
 
 use super::Metadata;
 use super::metadata;
@@ -571,6 +571,102 @@ impl Repository {
     pub fn reset_face_tags_imported(&mut self) -> Result<()> {
         let con = self.con.lock().unwrap();
         con.execute("UPDATE pictures SET face_tags_imported = 0", [])?;
+        Ok(())
+    }
+
+    /// Find pictures whose person names Fotema has not yet written to a sidecar.
+    pub fn find_pictures_for_face_tag_export(&self) -> Result<Vec<FaceTagExportPicture>> {
+        let con = self.con.lock().unwrap();
+
+        let mut stmt = con.prepare(
+            "SELECT
+                pictures.picture_id AS picture_id,
+                pictures.picture_path_b64 AS picture_path_b64,
+                pictures.orientation AS orientation,
+                CASE WHEN faces.is_confirmed = 1 AND faces.is_ignored = 0
+                     THEN people.name ELSE NULL END AS person_name,
+                faces.is_source_original AS is_source_original,
+                faces.bounds_x, faces.bounds_y, faces.bounds_width, faces.bounds_height
+            FROM pictures
+            LEFT JOIN pictures_faces AS faces
+                ON faces.picture_id = pictures.picture_id
+            LEFT JOIN people
+                ON people.person_id = faces.person_id
+                AND people.is_ignored = 0
+            WHERE pictures.face_tags_exported = 0
+            ORDER BY pictures.picture_id",
+        )?;
+
+        struct FaceTagExportRow {
+            picture_id: PictureId,
+            path: FlatpakPathBuf,
+            orientation: Option<Orientation>,
+            face: Option<ExportFace>,
+        }
+
+        let rows: Vec<FaceTagExportRow> = stmt
+            .query_map([], |row| {
+                let picture_id = row.get("picture_id").map(PictureId::new)?;
+                let path = self.to_library_path(row)?;
+                let orientation = row
+                    .get::<_, Option<u32>>("orientation")?
+                    .map(Orientation::from);
+                let bounds_x: Option<f32> = row.get("bounds_x")?;
+                let face = match bounds_x {
+                    Some(x) => Some(ExportFace {
+                        name: row.get("person_name")?,
+                        bounds: Rect {
+                            x,
+                            y: row.get("bounds_y")?,
+                            width: row.get("bounds_width")?,
+                            height: row.get("bounds_height")?,
+                        },
+                        is_source_original: row.get("is_source_original")?,
+                    }),
+                    None => None,
+                };
+                Ok(FaceTagExportRow {
+                    picture_id,
+                    path,
+                    orientation,
+                    face,
+                })
+            })?
+            .flatten()
+            .collect();
+
+        let mut groups: Vec<FaceTagExportPicture> = Vec::new();
+        for row in rows {
+            match groups.last_mut() {
+                Some(last) if last.picture_id == row.picture_id => {
+                    if let Some(face) = row.face {
+                        last.faces.push(face);
+                    }
+                }
+                _ => groups.push(FaceTagExportPicture {
+                    picture_id: row.picture_id,
+                    path: row.path,
+                    orientation: row.orientation,
+                    faces: row.face.into_iter().collect(),
+                }),
+            }
+        }
+        Ok(groups)
+    }
+
+    /// Mark pictures whose person names were written to a sidecar.
+    pub fn mark_face_tags_exported(&mut self, picture_ids: &[PictureId]) -> Result<()> {
+        let mut con = self.con.lock().unwrap();
+        let tx = con.transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "UPDATE pictures SET face_tags_exported = 1 WHERE picture_id = ?1",
+            )?;
+            for id in picture_ids {
+                stmt.execute(params![id.id()])?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 

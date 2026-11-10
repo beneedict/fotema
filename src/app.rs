@@ -168,6 +168,9 @@ pub struct Settings {
     /// ignores XMP face tags completely: it neither imports nor exports names.
     pub xmp_face_tags: bool,
 
+    /// Write confirmed person names to XMP sidecar files.
+    pub write_face_tags: bool,
+
     /// Has the user completed the onboarding processes to select
     /// the picture library root directory?
     pub is_onboarding_complete: bool,
@@ -286,6 +289,9 @@ pub(super) enum AppMsg {
 
     /// Re-import person names from XMP metadata across the library.
     RescanFaceTags,
+
+    /// Write confirmed person names to XMP sidecar files now.
+    WriteFaceTags,
 
     /// A face was named in the Unknown People view.
     FacesChanged,
@@ -855,6 +861,7 @@ impl SimpleAsyncComponent for App {
                 PreferencesOutput::EnableFaceDetection => AppMsg::ScanPicturesForFaces,
                 PreferencesOutput::ProcessMotionPhotos => AppMsg::ProcessMotionPhotos,
                 PreferencesOutput::XmpFaceTagsEnabled => AppMsg::RescanFaceTags,
+                PreferencesOutput::WriteFaceTags => AppMsg::WriteFaceTags,
             });
 
         let picture_navigation_view = adw::NavigationView::builder().build();
@@ -1122,6 +1129,9 @@ impl SimpleAsyncComponent for App {
                     TaskName::RecognizeFaces => {
                         self.banner.set_title(&fl!("banner-recognize-faces-photos"));
                     }
+                    TaskName::ExportFaceTags => {
+                        self.banner.set_title(&fl!("banner-write-face-tags"));
+                    }
                     TaskName::Clean(MediaType::Photo) => {
                         self.banner.set_title(&fl!("banner-clean-photos"));
                     }
@@ -1164,6 +1174,10 @@ impl SimpleAsyncComponent for App {
             AppMsg::RescanFaceTags => {
                 info!("Re-import face tags from photo metadata");
                 self.bootstrap.emit(BootstrapInput::RescanForFaceTags);
+            }
+            AppMsg::WriteFaceTags => {
+                info!("Write face tags to photo metadata");
+                self.bootstrap.emit(BootstrapInput::ExportFaceTags);
             }
             AppMsg::StopBackgroundTasks => {
                 info!("Stop all background tasks");
@@ -1229,6 +1243,7 @@ impl App {
             show_selfies: gio_settings.boolean("show-selfies"),
             process_motion_photos: gio_settings.boolean("process-motion-photos"),
             xmp_face_tags: gio_settings.boolean("xmp-face-tags"),
+            write_face_tags: gio_settings.boolean("write-face-tags"),
             face_detection_mode: FaceDetectionMode::from_str(
                 &gio_settings.string("face-detection-mode"),
             )
@@ -1246,6 +1261,7 @@ impl App {
         gio_settings.set_boolean("show-selfies", settings.show_selfies)?;
         gio_settings.set_boolean("process-motion-photos", settings.process_motion_photos)?;
         gio_settings.set_boolean("xmp-face-tags", settings.xmp_face_tags)?;
+        gio_settings.set_boolean("write-face-tags", settings.write_face_tags)?;
         gio_settings.set_string("face-detection-mode", settings.face_detection_mode.as_ref())?;
         gio_settings.set_string("album-sort", settings.album_sort.as_ref())?;
         gio_settings.set_boolean("onboarding-complete", settings.is_onboarding_complete)?;

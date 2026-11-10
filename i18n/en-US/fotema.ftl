@@ -298,6 +298,12 @@ prefs-processing-xmp-face-tags = XMP face tags
 prefs-processing-motion-photos = Motion photos
   .subtitle = Detect Android motion photos and extract the videos.
 
+# Write person names to sidecar files, enabled or disabled.
+# Attributes:
+#   .subtitle - Description of toggle button action.
+prefs-processing-write-face-tags = Write person names to photos
+  .subtitle = Save confirmed person names beside each photo, so another computer can import them.
+
 prefs-library-section =
   .title = Library
   .description = Configure library directory.
@@ -335,6 +341,7 @@ progress-detect-faces-photos = Detecting faces in photos.
 
 # Recognize faces in photos as known people
 progress-recognize-faces-photos = Recognizing people in photos.
+progress-write-face-tags = Writing person names to photo metadata.
 
 # Not doing any background work
 progress-idle = Idle.
@@ -372,6 +379,7 @@ banner-detect-faces-photos = Detecting faces in photos. This will take a while.
 
 # Recognize faces as people
 banner-recognize-faces-photos = Recognizing people in photos. This will take a while.
+banner-write-face-tags = Writing person names to photo metadata.
 
 # Transcoding videos to a compatible format
 banner-convert-videos = Converting videos.

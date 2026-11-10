@@ -30,6 +30,9 @@ use tracing::{error, info, warn};
 use anyhow;
 
 use super::{
+    face_tag_export_task::{
+        FaceTagExportTask, FaceTagExportTaskInput, FaceTagExportTaskOutput,
+    },
     library_scan_task::{LibraryScanTask, LibraryScanTaskInput, LibraryScanTaskOutput},
     load_library_task::{LoadLibraryTask, LoadLibraryTaskInput, LoadLibraryTaskOutput},
     migrate_task::{MigrateTask, MigrateTaskInput, MigrateTaskOutput},
@@ -87,6 +90,7 @@ pub enum TaskName {
     Clean(MediaType),
     DetectFaces,
     RecognizeFaces,
+    ExportFaceTags,
     Transcode,
     Tidy,
     Migrate,
@@ -115,6 +119,9 @@ pub enum BootstrapInput {
 
     /// Re-import person names from photo XMP metadata.
     RescanForFaceTags,
+
+    /// Write confirmed person names to photo XMP sidecars.
+    ExportFaceTags,
 
     /// Queue task for transcoding videos
     TranscodeAll,
@@ -175,6 +182,7 @@ pub struct Controllers {
 
     photo_detect_faces_task: Arc<WorkerController<PhotoDetectFacesTask>>,
     photo_recognize_faces_task: Arc<WorkerController<PhotoRecognizeFacesTask>>,
+    face_tag_export_task: Arc<WorkerController<FaceTagExportTask>>,
 
     video_transcode_task: Arc<WorkerController<VideoTranscodeTask>>,
 
@@ -213,12 +221,14 @@ impl Controllers {
                 info!("Queueing task to scan picture {} for faces", picture_id);
                 self.add_task_photo_detect_faces_for_one(picture_id);
                 self.add_task_photo_recognize_faces();
+                self.add_task_face_tag_export();
                 self.run_if_idle();
             }
             BootstrapInput::ScanPicturesForFaces => {
                 info!("Queueing task to scan all pictures for faces");
                 self.add_task_photo_detect_faces();
                 self.add_task_photo_recognize_faces();
+                self.add_task_face_tag_export();
                 self.run_if_idle();
             }
             BootstrapInput::RescanForFaceTags => {
@@ -231,6 +241,12 @@ impl Controllers {
                 self.enqueue(Box::new(move || {
                     sender.emit(PhotoRecognizeFacesTaskInput::RescanFaceTags)
                 }));
+                self.add_task_face_tag_export();
+                self.run_if_idle();
+            }
+            BootstrapInput::ExportFaceTags => {
+                info!("Queueing task to write face tags to photo metadata");
+                self.add_task_face_tag_export();
                 self.run_if_idle();
             }
             BootstrapInput::TranscodeAll => {
@@ -377,6 +393,22 @@ impl Controllers {
                 }));
             }
         };
+    }
+
+    /// Queue writing the confirmed names back to XMP sidecar files. Runs after
+    /// recognition, so faces that recognition has just assigned are included.
+    fn add_task_face_tag_export(&mut self) {
+        let sender = self.face_tag_export_task.sender().clone();
+        let enabled = {
+            let settings = self.settings_state.read();
+            settings.xmp_face_tags && settings.write_face_tags
+        };
+        let mode = self.settings_state.read().face_detection_mode;
+        if enabled && matches!(mode, FaceDetectionMode::On) {
+            self.enqueue(Box::new(move || {
+                sender.emit(FaceTagExportTaskInput::Start)
+            }));
+        }
     }
 
     fn add_task_person_thumbnails(&mut self) {
@@ -679,6 +711,22 @@ impl Bootstrap {
                 }
             });
 
+        let face_tag_export_task = FaceTagExportTask::builder()
+            .detach_worker((
+                stop.clone(),
+                photo_repo.clone(),
+                thumbnailer.clone(),
+                self.settings_state.clone(),
+            ))
+            .forward(sender.input_sender(), |msg| match msg {
+                FaceTagExportTaskOutput::Started => {
+                    BootstrapInput::TaskStarted(TaskName::ExportFaceTags)
+                }
+                FaceTagExportTaskOutput::Completed => {
+                    BootstrapInput::TaskCompleted(TaskName::ExportFaceTags, None)
+                }
+            });
+
         let tidy_task =
             TidyTask::builder()
                 .detach_worker(stop.clone())
@@ -735,6 +783,7 @@ impl Bootstrap {
             video_thumbnail_task: Arc::new(video_thumbnail_task),
             photo_detect_faces_task: Arc::new(photo_detect_faces_task),
             photo_recognize_faces_task: Arc::new(photo_recognize_faces_task),
+            face_tag_export_task: Arc::new(face_tag_export_task),
             video_transcode_task: Arc::new(video_transcode_task),
             tidy_task: Arc::new(tidy_task),
             migrate_task: Arc::new(migrate_task),
@@ -767,6 +816,7 @@ impl Bootstrap {
         controllers.add_task_photo_extract_motion();
         controllers.add_task_photo_detect_faces();
         controllers.add_task_photo_recognize_faces();
+        controllers.add_task_face_tag_export();
 
         controllers.add_task_tidy();
 
