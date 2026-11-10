@@ -104,7 +104,7 @@ fn reconcile_legacy_fork_history(con: &mut Connection, runner: &refinery::Runner
 
     let is_legacy_fork = LEGACY_FORK_MIGRATIONS
         .iter()
-        .all(|(version, name)| applied.get(version).is_some_and(|(got, _)| got == name))
+        .any(|(version, name)| applied.get(version).is_some_and(|(got, _)| got == name))
         || table_exists(con, FORK_MARKER_TABLE)?
         || table_exists(con, "clip_embeddings")?;
     if !is_legacy_fork {
