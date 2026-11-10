@@ -97,13 +97,13 @@ impl FaceTagExportTask {
 
             let size = DetectionSize::new(&self.thumbnailer, &pic.path, pic.orientation);
 
-            let mut missing_size = false;
+            let mut skipped = false;
             let mut detected: Vec<TagArea> = Vec::with_capacity(pic.faces.len());
             let mut named: Vec<FaceTag> = Vec::new();
 
             for face in &pic.faces {
                 let Some((width, height)) = size.size_of(face.is_source_original) else {
-                    missing_size = true;
+                    skipped = true;
                     continue;
                 };
 
@@ -116,6 +116,7 @@ impl FaceTagExportTask {
                     height,
                 )
                 .and_then(TagArea::clamped) else {
+                    skipped = true;
                     continue;
                 };
 
@@ -129,11 +130,15 @@ impl FaceTagExportTask {
                 }
             }
 
-            if missing_size {
+            if skipped {
+                // Leave the picture unmarked so the next run retries it. A
+                // thumbnail may still be generated, or the file may be readable
+                // again, and the sidecar is incomplete without these faces.
                 warn!(
-                    "No detection size for one or more faces of {:?}, those faces were skipped",
+                    "Skipped one or more faces of {:?} for the sidecar export",
                     pic.path.host_path
                 );
+                continue;
             }
 
             match face_tags::write_face_tags(&pic.path.sandbox_path, &named, &detected) {
