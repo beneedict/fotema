@@ -60,6 +60,9 @@ pub enum PreferencesInput {
 
     UpdateProcessMotionPhotos(bool),
 
+    /// Enable or disable reading and writing XMP face tags.
+    UpdateXmpFaceTags(bool),
+
     Sort(AlbumSort),
 
     ChoosePicturesDir,
@@ -74,6 +77,9 @@ pub enum PreferencesOutput {
 
     /// Process motion photos right now.
     ProcessMotionPhotos,
+
+    /// XMP face tags were enabled: import names from the photos now.
+    XmpFaceTagsEnabled,
 }
 
 #[relm4::component(pub async)]
@@ -157,6 +163,18 @@ impl SimpleAsyncComponent for PreferencesDialog {
                     },
 
                     adw::SwitchRow {
+                        set_title: &fl!("prefs-processing-xmp-face-tags"),
+                        set_subtitle: &fl!("prefs-processing-xmp-face-tags", "subtitle"),
+
+                        #[watch]
+                        set_active: model.settings.xmp_face_tags,
+
+                        connect_active_notify[sender] => move |switch| {
+                            let _ = sender.input_sender().send(PreferencesInput::UpdateXmpFaceTags(switch.is_active()));
+                        },
+                    },
+
+                    adw::SwitchRow {
                         set_title: &fl!("prefs-processing-motion-photos"),
                         set_subtitle: &fl!("prefs-processing-motion-photos", "subtitle"),
 
@@ -229,6 +247,14 @@ impl SimpleAsyncComponent for PreferencesDialog {
                 info!("Update show selfies: {}", show_selfies);
                 self.settings.show_selfies = show_selfies;
                 *self.settings_state.write() = self.settings.clone();
+            }
+            PreferencesInput::UpdateXmpFaceTags(enable) => {
+                info!("Update XMP face tags: {:?}", enable);
+                self.settings.xmp_face_tags = enable;
+                *self.settings_state.write() = self.settings.clone();
+                if enable {
+                    let _ = sender.output(PreferencesOutput::XmpFaceTagsEnabled);
+                }
             }
             PreferencesInput::UpdateProcessMotionPhotos(enable) => {
                 info!("Update process motion photos: {:?}", enable);

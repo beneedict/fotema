@@ -222,6 +222,10 @@ impl Controllers {
                 self.run_if_idle();
             }
             BootstrapInput::RescanForFaceTags => {
+                if !self.settings_state.read().xmp_face_tags {
+                    info!("XMP face tags are disabled; ignoring re-import request");
+                    return;
+                }
                 info!("Queueing task to re-import face tags from photo metadata");
                 let sender = self.photo_recognize_faces_task.sender().clone();
                 self.enqueue(Box::new(move || {
@@ -519,6 +523,7 @@ impl Bootstrap {
                 stop.clone(),
                 photo_repo.clone(),
                 self.progress_monitor.clone(),
+                self.settings_state.clone(),
             ))
             .forward(sender.input_sender(), |msg| match msg {
                 PhotoEnrichTaskOutput::Started => {
@@ -662,6 +667,7 @@ impl Bootstrap {
                 people_repo.clone(),
                 photo_repo.clone(),
                 thumbnailer.clone(),
+                self.settings_state.clone(),
                 self.progress_monitor.clone(),
             ))
             .forward(sender.input_sender(), |msg| match msg {

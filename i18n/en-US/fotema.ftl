@@ -288,6 +288,10 @@ prefs-processing-section = Photo and video processing
 prefs-processing-face-detection = Face detection
   .subtitle = Detect faces and recognize people you've named. This is a time consuming process.
 
+# Enable or disable reading and writing person names in photo XMP sidecars.
+prefs-processing-xmp-face-tags = XMP face tags
+  .subtitle = Reads person names that other programs wrote into the photo's XMP sidecar file, and writes your confirmed names back. When off, Fotema ignores XMP face tags completely.
+
 # Motion photo processing enabled or disabled.
 # Attributes:
 #   .subtitle - Description of toggle button action.

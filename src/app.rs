@@ -164,6 +164,10 @@ pub struct Settings {
     /// Enable processing of Android motion photos.
     pub process_motion_photos: bool,
 
+    /// Read and write person names in photo XMP sidecars. When off, Fotema
+    /// ignores XMP face tags completely: it neither imports nor exports names.
+    pub xmp_face_tags: bool,
+
     /// Has the user completed the onboarding processes to select
     /// the picture library root directory?
     pub is_onboarding_complete: bool,
@@ -850,6 +854,7 @@ impl SimpleAsyncComponent for App {
             .forward(sender.input_sender(), |msg| match msg {
                 PreferencesOutput::EnableFaceDetection => AppMsg::ScanPicturesForFaces,
                 PreferencesOutput::ProcessMotionPhotos => AppMsg::ProcessMotionPhotos,
+                PreferencesOutput::XmpFaceTagsEnabled => AppMsg::RescanFaceTags,
             });
 
         let picture_navigation_view = adw::NavigationView::builder().build();
@@ -1223,6 +1228,7 @@ impl App {
         Ok(Settings {
             show_selfies: gio_settings.boolean("show-selfies"),
             process_motion_photos: gio_settings.boolean("process-motion-photos"),
+            xmp_face_tags: gio_settings.boolean("xmp-face-tags"),
             face_detection_mode: FaceDetectionMode::from_str(
                 &gio_settings.string("face-detection-mode"),
             )
@@ -1239,6 +1245,7 @@ impl App {
         let gio_settings = gio::Settings::new(APP_ID);
         gio_settings.set_boolean("show-selfies", settings.show_selfies)?;
         gio_settings.set_boolean("process-motion-photos", settings.process_motion_photos)?;
+        gio_settings.set_boolean("xmp-face-tags", settings.xmp_face_tags)?;
         gio_settings.set_string("face-detection-mode", settings.face_detection_mode.as_ref())?;
         gio_settings.set_string("album-sort", settings.album_sort.as_ref())?;
         gio_settings.set_boolean("onboarding-complete", settings.is_onboarding_complete)?;

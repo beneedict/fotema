@@ -21,6 +21,7 @@ use fotema_core::photo::model::Orientation;
 use fotema_core::thumbnailify::Thumbnailer;
 use fotema_core::{FlatpakPathBuf, PictureId};
 
+use crate::app::SettingsState;
 use crate::app::components::progress_monitor::{ProgressMonitor, ProgressMonitorInput, TaskName};
 
 /// Cosine similarity above which an unknown face is taken to be a named person.
@@ -57,6 +58,8 @@ pub struct PhotoRecognizeFacesTask {
 
     progress_monitor: Arc<Reducer<ProgressMonitor>>,
 
+    settings_state: SettingsState,
+
     cache_dir: PathBuf,
 
     // Built once from cache_dir, so the thumbnail path is not recomputed per face.
@@ -68,11 +71,16 @@ impl PhotoRecognizeFacesTask {
         let start = std::time::Instant::now();
 
         // Import names already present in the photos' metadata before computing
-        // embeddings, so imported faces drop out of the unnamed set.
-        match self.import_face_tags() {
-            Ok(n) if n > 0 => info!("Imported {} face name(s) from photo metadata.", n),
-            Ok(_) => {}
-            Err(e) => error!("Face-tag import failed: {:?}", e),
+        // embeddings, so imported faces drop out of the unnamed set. XMP face
+        // tags are optional; when they are off, do not touch the sidecars.
+        if self.settings_state.read().xmp_face_tags {
+            match self.import_face_tags() {
+                Ok(n) if n > 0 => info!("Imported {} face name(s) from photo metadata.", n),
+                Ok(_) => {}
+                Err(e) => error!("Face-tag import failed: {:?}", e),
+            }
+        } else {
+            info!("XMP face tags are disabled; skipping name import");
         }
 
         // Named reference faces and the current embeddings in the DB. The
@@ -339,6 +347,9 @@ impl PhotoRecognizeFacesTask {
     }
 
     fn rescan_face_tags(&self) -> Result<usize> {
+        if !self.settings_state.read().xmp_face_tags {
+            return Ok(0);
+        }
         let _ = self.photo_repo.clone().reset_face_tags_imported();
         self.import_face_tags()
     }
@@ -427,13 +438,14 @@ impl Worker for PhotoRecognizeFacesTask {
         people::Repository,
         photo::Repository,
         Thumbnailer,
+        SettingsState,
         Arc<Reducer<ProgressMonitor>>,
     );
     type Input = PhotoRecognizeFacesTaskInput;
     type Output = PhotoRecognizeFacesTaskOutput;
 
     fn init(
-        (stop, cache_dir, repo, photo_repo, thumbnailer, progress_monitor): Self::Init,
+        (stop, cache_dir, repo, photo_repo, thumbnailer, settings_state, progress_monitor): Self::Init,
         _sender: ComponentSender<Self>,
     ) -> Self {
         PhotoRecognizeFacesTask {
@@ -442,6 +454,7 @@ impl Worker for PhotoRecognizeFacesTask {
             repo,
             photo_repo,
             thumbnailer,
+            settings_state,
             progress_monitor,
         }
     }
