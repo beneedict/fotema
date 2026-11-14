@@ -91,6 +91,7 @@ impl FaceEmbedder {
             true,  // swap BGR -> RGB
             false, // no crop
             opencv::core::CV_32F,
+            1, // INTER_LINEAR
         )?;
 
         self.net
@@ -246,6 +247,7 @@ fn arcface_warmup(net: &mut opencv::dnn::Net) -> Result<()> {
         true,
         false,
         opencv::core::CV_32F,
+        1, // INTER_LINEAR
     )?;
     net.set_input(&blob, "", 1.0, opencv::core::Scalar::default())?;
     let _ = net.forward_single_def()?;
