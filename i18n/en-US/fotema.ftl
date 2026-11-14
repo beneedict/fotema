@@ -332,6 +332,16 @@ prefs-processing-section = Photo and video processing
 prefs-processing-face-detection = Face detection
   .subtitle = Detect faces and recognize people you've named. This is a time consuming process.
 
+# Face detector used for face detection.
+prefs-processing-face-detection-model = Face detector
+  .subtitle = YuNet is faster and finds more faces. BlazeFace is the previous detector.
+
+# YuNet face detector option.
+prefs-processing-face-detection-model-yunet = YuNet (recommended)
+
+# BlazeFace face detector option.
+prefs-processing-face-detection-model-blazeface = BlazeFace (legacy)
+
 # Motion photo processing enabled or disabled.
 # Attributes:
 #   .subtitle - Description of toggle button action.

@@ -787,7 +787,10 @@ impl Repository {
     /// This method is not on the people repo because I don't what that repo
     /// to need a pic_base_dir.
     /// FIXME move to people repo
-    pub fn find_face_detection_candidates(&self) -> Result<Vec<FaceDetectionCandidate>> {
+    pub fn find_face_detection_candidates(
+        &self,
+        detector: &str,
+    ) -> Result<Vec<FaceDetectionCandidate>> {
         let con = self.con.lock().unwrap();
         let mut stmt = con.prepare(
             "SELECT
@@ -802,13 +805,16 @@ impl Repository {
                     ) AS ordering_ts
                 FROM pictures
                 LEFT OUTER JOIN pictures_face_scans USING (picture_id)
-                WHERE pictures_face_scans.picture_id IS NULL
+                WHERE (
+                    pictures_face_scans.picture_id IS NULL
+                    OR pictures_face_scans.detector != ?1
+                )
                 AND COALESCE(pictures.is_broken, FALSE) IS FALSE
                 ORDER BY ordering_ts DESC",
         )?;
 
         let result = stmt
-            .query_map([], |row| self.to_face_detection_candidate(row))?
+            .query_map([detector], |row| self.to_face_detection_candidate(row))?
             .flatten()
             .collect();
 

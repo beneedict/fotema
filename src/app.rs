@@ -28,6 +28,7 @@ use fotema_core::FlatpakPathBuf;
 use fotema_core::PictureId;
 use fotema_core::VisualId;
 use fotema_core::database;
+use fotema_core::machine_learning::face_extractor::FaceDetectionModel;
 use fotema_core::path_encoding;
 use fotema_core::people;
 use fotema_core::search;
@@ -164,6 +165,9 @@ pub struct Settings {
 
     /// Enable or disable face detection.
     pub face_detection_mode: FaceDetectionMode,
+
+    /// Detector used for face detection.
+    pub face_detection_model: FaceDetectionModel,
 
     /// Automatically re-run person recognition in the background after a face is
     /// named (the manual "find matches" button works regardless).
@@ -973,6 +977,7 @@ impl SimpleAsyncComponent for App {
             .launch((settings_state.clone(), root.clone()))
             .forward(sender.input_sender(), |msg| match msg {
                 PreferencesOutput::EnableFaceDetection => AppMsg::ScanPicturesForFaces,
+                PreferencesOutput::FaceDetectionModelChanged => AppMsg::ScanPicturesForFaces,
                 PreferencesOutput::ProcessMotionPhotos => AppMsg::ProcessMotionPhotos,
                 PreferencesOutput::XmpFaceTagsEnabled => AppMsg::RescanFaceTags,
             });
@@ -1532,6 +1537,10 @@ impl App {
                 &gio_settings.string("face-detection-mode"),
             )
             .unwrap_or(FaceDetectionMode::Off),
+            face_detection_model: FaceDetectionModel::from_str(
+                &gio_settings.string("face-detection-model"),
+            )
+            .unwrap_or_default(),
             album_sort: AlbumSort::from_str(&gio_settings.string("album-sort"))
                 .unwrap_or(AlbumSort::Ascending),
             is_onboarding_complete: gio_settings.boolean("onboarding-complete"),
@@ -1549,6 +1558,7 @@ impl App {
         gio_settings.set_boolean("update-check-enabled", settings.update_check_enabled)?;
         gio_settings.set_boolean("face-recognition-auto", settings.face_recognition_auto)?;
         gio_settings.set_string("face-detection-mode", settings.face_detection_mode.as_ref())?;
+        gio_settings.set_string("face-detection-model", settings.face_detection_model.as_str())?;
         gio_settings.set_string("album-sort", settings.album_sort.as_ref())?;
         gio_settings.set_boolean("onboarding-complete", settings.is_onboarding_complete)?;
         gio_settings.set_string(

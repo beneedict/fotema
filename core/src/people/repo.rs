@@ -968,108 +968,290 @@ impl Repository {
         Ok(())
     }
 
-    pub fn add_face_scans(
+    /// Faces of a picture with the fields that must survive a detector change.
+    pub fn find_faces_for_picture(
+        &self,
+        picture_id: &PictureId,
+    ) -> Result<Vec<model::ExistingFace>> {
+        let con = self.con.lock().unwrap();
+        let mut stmt = con.prepare(
+            "SELECT
+                face_id,
+                bounds_x,
+                bounds_y,
+                bounds_width,
+                bounds_height,
+                is_source_original,
+                person_id,
+                is_confirmed,
+                is_thumbnail,
+                is_ignored
+             FROM pictures_faces
+             WHERE picture_id = ?1",
+        )?;
+
+        let rows = stmt.query_map([picture_id.id()], |row| {
+            Ok(model::ExistingFace {
+                face_id: FaceId::new(row.get("face_id")?),
+                bounds: Rect {
+                    x: row.get("bounds_x")?,
+                    y: row.get("bounds_y")?,
+                    width: row.get("bounds_width")?,
+                    height: row.get("bounds_height")?,
+                },
+                is_source_original: row.get("is_source_original")?,
+                person_id: row.get::<_, Option<i64>>("person_id")?.map(PersonId::new),
+                is_confirmed: row.get("is_confirmed")?,
+                is_thumbnail: row.get("is_thumbnail")?,
+                is_ignored: row.get("is_ignored")?,
+            })
+        })?;
+
+        Ok(rows.flatten().collect())
+    }
+
+    /// Insert a picture's face scan and its faces.
+    ///
+    /// Existing faces are matched to the new detections. A matched old face
+    /// transfers its person assignment, confirmation, thumbnail flag, and
+    /// ignored flag to the new face, then the old row is removed. Unmatched
+    /// old faces are kept when they carry a person assignment, a person
+    /// thumbnail, or an ignore decision. This is what keeps names intact when
+    /// the user switches face detectors.
+    pub fn replace_face_scans(
         &mut self,
         picture_id: &PictureId,
-        faces: &Vec<face_extractor::Face>,
+        faces: &[face_extractor::Face],
+        detector: &str,
+        old_faces: &[model::ExistingFace],
     ) -> Result<()> {
+        let matches = Self::match_existing_faces(faces, old_faces);
+
         let mut con = self.con.lock().unwrap();
         let tx = con.transaction()?;
 
-        // Create a scope to make borrowing of tx not be an error.
+        let mut scan_insert_stmt = tx.prepare_cached(
+            "INSERT INTO pictures_face_scans (
+                picture_id,
+                is_broken,
+                face_count,
+                scan_ts,
+                detector
+            ) VALUES (
+                ?1, ?2, ?3, CURRENT_TIMESTAMP, ?4
+            ) ON CONFLICT (picture_id) DO UPDATE SET
+                is_broken = ?2,
+                face_count = ?3,
+                scan_ts = CURRENT_TIMESTAMP,
+                detector = ?4
+            ",
+        )?;
+
+        let mut face_insert_stmt = tx.prepare_cached(
+            "INSERT INTO pictures_faces (
+                picture_id,
+                thumbnail_path,
+                bounds_path,
+                model_name,
+
+                person_id,
+                is_thumbnail,
+                is_confirmed,
+                is_source_original,
+
+                bounds_x,
+                bounds_y,
+                bounds_width,
+                bounds_height,
+
+                right_eye_x,
+                right_eye_y,
+
+                left_eye_x,
+                left_eye_y,
+
+                nose_x,
+                nose_y,
+
+                right_mouth_corner_x,
+                right_mouth_corner_y,
+
+                left_mouth_corner_x,
+                left_mouth_corner_y,
+
+                confidence,
+                is_ignored
+            ) VALUES (
+                ?1, ?2, ?3, ?4,
+                ?5, ?6, ?7, false,
+                ?8, ?9, ?10, ?11,
+                ?12, ?13,
+                ?14, ?15,
+                ?16, ?17,
+                ?18, ?19,
+                ?20, ?21,
+                ?22, ?23
+            )
+            ",
+        )?;
+
+        for (index, face) in faces.iter().enumerate() {
+            let old = matches[index].map(|old_index| &old_faces[old_index]);
+            let thumbnail_path = face.thumbnail_path.strip_prefix(&self.data_dir_base_path)?;
+            let bounds_path = face.bounds_path.strip_prefix(&self.data_dir_base_path)?;
+
+            let right_eye = face.right_eye();
+            let left_eye = face.left_eye();
+            let nose = face.nose();
+            let right_mouth_corner = face.right_mouth_corner();
+            let left_mouth_corner = face.left_mouth_corner();
+
+            face_insert_stmt.execute(params![
+                picture_id.id(),
+                thumbnail_path.to_string_lossy(),
+                bounds_path.to_string_lossy(),
+                face.model_name,
+                old.and_then(|o| o.person_id).map(|p| p.id()),
+                old.is_some_and(|o| o.is_thumbnail),
+                old.is_some_and(|o| o.is_confirmed),
+                face.bounds.x,
+                face.bounds.y,
+                face.bounds.width,
+                face.bounds.height,
+                right_eye.map(|x| x.0),
+                right_eye.map(|x| x.1),
+                left_eye.map(|x| x.0),
+                left_eye.map(|x| x.1),
+                nose.map(|x| x.0),
+                nose.map(|x| x.1),
+                right_mouth_corner.map(|x| x.0),
+                right_mouth_corner.map(|x| x.1),
+                left_mouth_corner.map(|x| x.0),
+                left_mouth_corner.map(|x| x.1),
+                face.confidence,
+                old.is_some_and(|o| o.is_ignored),
+            ])?;
+        }
+
+        // Delete matched old faces: their new counterparts now carry the
+        // assignment. Unmatched old faces are only deleted when they contain
+        // no user decision; named, ignored, and person-thumbnail faces stay so
+        // the new detector cannot lose them.
+        let matched_old: std::collections::HashSet<usize> =
+            matches.iter().flatten().copied().collect();
+        let mut kept_old = 0usize;
         {
-            let mut scan_insert_stmt = tx.prepare_cached(
-                "INSERT INTO pictures_face_scans (
-                    picture_id,
-                    is_broken,
-                    face_count,
-                    scan_ts
-                ) VALUES (
-                    ?1, ?2, ?3, CURRENT_TIMESTAMP
-                ) ON CONFLICT (picture_id) DO UPDATE SET
-                    is_broken = ?2,
-                    face_count = ?3,
-                    scan_ts = CURRENT_TIMESTAMP
-                ",
-            )?;
-
-            scan_insert_stmt.execute(params![picture_id.id(), false, faces.len() as u32,])?;
-
-            let mut face_insert_stmt = tx.prepare_cached(
-                "INSERT INTO pictures_faces (
-                    picture_id,
-                    thumbnail_path,
-                    bounds_path,
-
-                    model_name,
-
-                    bounds_x,
-                    bounds_y,
-                    bounds_width,
-                    bounds_height,
-
-                    right_eye_x,
-                    right_eye_y,
-
-                    left_eye_x,
-                    left_eye_y,
-
-                    nose_x,
-                    nose_y,
-
-                    right_mouth_corner_x,
-                    right_mouth_corner_y,
-
-                    left_mouth_corner_x,
-                    left_mouth_corner_y,
-
-                    confidence,
-
-                    is_ignored
-                ) VALUES (
-                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-                    ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, false
-                )
-                ",
-            )?;
-
-            for face in faces {
-                // convert to relative path before saving to database
-                let thumbnail_path = face.thumbnail_path.strip_prefix(&self.data_dir_base_path)?;
-                let bounds_path = face.bounds_path.strip_prefix(&self.data_dir_base_path)?;
-
-                let right_eye = face.right_eye();
-                let left_eye = face.left_eye();
-                let nose = face.nose();
-                let right_mouth_corner = face.right_mouth_corner();
-                let left_mouth_corner = face.left_mouth_corner();
-
-                face_insert_stmt.execute(params![
-                    picture_id.id(),
-                    thumbnail_path.to_string_lossy(),
-                    bounds_path.to_string_lossy(),
-                    face.model_name,
-                    face.bounds.x,
-                    face.bounds.y,
-                    face.bounds.width,
-                    face.bounds.height,
-                    right_eye.map(|x| x.0),
-                    right_eye.map(|x| x.1),
-                    left_eye.map(|x| x.0),
-                    left_eye.map(|x| x.1),
-                    nose.map(|x| x.0),
-                    nose.map(|x| x.1),
-                    right_mouth_corner.map(|x| x.0),
-                    right_mouth_corner.map(|x| x.1),
-                    left_mouth_corner.map(|x| x.0),
-                    left_mouth_corner.map(|x| x.1),
-                    face.confidence
-                ])?;
+            let mut delete_stmt =
+                tx.prepare_cached("DELETE FROM pictures_faces WHERE face_id = ?1")?;
+            for (index, old) in old_faces.iter().enumerate() {
+                let keep = !matched_old.contains(&index)
+                    && (old.person_id.is_some() || old.is_thumbnail || old.is_ignored);
+                if keep {
+                    kept_old += 1;
+                } else {
+                    delete_stmt.execute([old.face_id.id()])?;
+                }
             }
         }
 
+        let face_count = faces.len() + kept_old;
+        scan_insert_stmt.execute(params![picture_id.id(), false, face_count as u32, detector])?;
+
+        drop(face_insert_stmt);
+        drop(scan_insert_stmt);
         tx.commit()?;
         Ok(())
+    }
+
+    /// Insert a face scan for a picture that has no previous faces.
+    pub fn add_face_scans(
+        &mut self,
+        picture_id: &PictureId,
+        faces: &[face_extractor::Face],
+        detector: &str,
+    ) -> Result<()> {
+        self.replace_face_scans(picture_id, faces, detector, &[])
+    }
+
+    /// Greedy one-to-one matching from new detections to old faces. First by
+    /// bounding-box overlap, then by centre containment for boxes that moved.
+    fn match_existing_faces(
+        faces: &[face_extractor::Face],
+        old_faces: &[model::ExistingFace],
+    ) -> Vec<Option<usize>> {
+        let mut used = vec![false; old_faces.len()];
+        let mut matches = vec![None; faces.len()];
+
+        for (new_index, new_face) in faces.iter().enumerate() {
+            let mut best_iou = 0.3f32;
+            let mut best_old = None;
+            for (old_index, old) in old_faces.iter().enumerate() {
+                if used[old_index] || old.is_source_original {
+                    continue;
+                }
+                let iou = Self::rect_iou(&old.bounds, &new_face.bounds);
+                if iou > best_iou {
+                    best_iou = iou;
+                    best_old = Some(old_index);
+                }
+            }
+            if let Some(old_index) = best_old {
+                matches[new_index] = Some(old_index);
+                used[old_index] = true;
+            }
+        }
+
+        for (new_index, new_face) in faces.iter().enumerate() {
+            if matches[new_index].is_some() {
+                continue;
+            }
+            let new_centre_x = new_face.bounds.x + new_face.bounds.width / 2.0;
+            let new_centre_y = new_face.bounds.y + new_face.bounds.height / 2.0;
+            let mut best_distance = f32::MAX;
+            let mut best_old = None;
+            for (old_index, old) in old_faces.iter().enumerate() {
+                if used[old_index] || old.is_source_original {
+                    continue;
+                }
+                let old_centre_x = old.bounds.x + old.bounds.width / 2.0;
+                let old_centre_y = old.bounds.y + old.bounds.height / 2.0;
+                let inside = old_centre_x >= new_face.bounds.x
+                    && old_centre_x <= new_face.bounds.x + new_face.bounds.width
+                    && old_centre_y >= new_face.bounds.y
+                    && old_centre_y <= new_face.bounds.y + new_face.bounds.height;
+                let old_size = old.bounds.width.max(old.bounds.height);
+                let new_size = new_face.bounds.width.max(new_face.bounds.height).max(1.0);
+                let ratio = old_size / new_size;
+                if inside && (0.5..=2.0).contains(&ratio) {
+                    let distance = (old_centre_x - new_centre_x).powi(2)
+                        + (old_centre_y - new_centre_y).powi(2);
+                    if distance < best_distance {
+                        best_distance = distance;
+                        best_old = Some(old_index);
+                    }
+                }
+            }
+            if let Some(old_index) = best_old {
+                matches[new_index] = Some(old_index);
+                used[old_index] = true;
+            }
+        }
+
+        matches
+    }
+
+    fn rect_iou(a: &Rect, b: &face_extractor::Rect) -> f32 {
+        let x1 = a.x.max(b.x);
+        let y1 = a.y.max(b.y);
+        let x2 = (a.x + a.width).min(b.x + b.width);
+        let y2 = (a.y + a.height).min(b.y + b.height);
+        let intersection = (x2 - x1).max(0.0) * (y2 - y1).max(0.0);
+        let union = a.width * a.height + b.width * b.height - intersection;
+        if union <= 0.0 {
+            0.0
+        } else {
+            intersection / union
+        }
     }
 
     /// Add a new named person derived from a face.
@@ -1567,5 +1749,161 @@ impl Repository {
         };
 
         std::result::Result::Ok(face)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database;
+    use crate::machine_learning::face_extractor::{Face, Rect as FaceRect};
+    use crate::photo::model::PictureId;
+    use std::sync::{Arc, Mutex};
+
+    fn test_repo() -> Repository {
+        let con = database::setup_in_memory().unwrap();
+        let con = Arc::new(Mutex::new(con));
+        {
+            let con = con.lock().unwrap();
+            con.execute(
+                "INSERT INTO pictures (
+                    picture_id, picture_path_b64, picture_path_lossy,
+                    fs_created_ts, link_path_b64, link_path_lossy
+                ) VALUES (1, 'cGljLmpwZw==', 'pic.jpg', CURRENT_TIMESTAMP, 'bGluaw==', 'link')",
+                [],
+            )
+            .unwrap();
+            con.execute(
+                "INSERT INTO people (person_id, name) VALUES (10, 'Alice')",
+                [],
+            )
+            .unwrap();
+            con.execute(
+                "INSERT INTO pictures_faces (
+                    face_id, picture_id, model_name, person_id,
+                    is_thumbnail, is_confirmed, is_source_original,
+                    thumbnail_path, bounds_path,
+                    bounds_x, bounds_y, bounds_width, bounds_height,
+                    right_eye_x, right_eye_y, left_eye_x, left_eye_y,
+                    nose_x, nose_y, right_mouth_corner_x, right_mouth_corner_y,
+                    left_mouth_corner_x, left_mouth_corner_y,
+                    confidence, is_ignored
+                ) VALUES (
+                    100, 1, 'blaze_face_640_default', 10,
+                    TRUE, TRUE, FALSE,
+                    'old_thumb.jpg', 'old_bounds.jpg',
+                    10, 10, 20, 20,
+                    14, 14, 16, 14, 15, 17, 16, 20, 14, 20,
+                    0.9, FALSE
+                )",
+                [],
+            )
+            .unwrap();
+        }
+        Repository::open(Path::new("/tmp"), Path::new("/tmp"), con).unwrap()
+    }
+
+    fn face(bounds: FaceRect) -> Face {
+        Face::new(
+            PathBuf::from("/tmp/new_thumb.jpg"),
+            PathBuf::from("/tmp/new_bounds.jpg"),
+            bounds,
+            0.95,
+            Some(vec![
+                (14.0, 14.0),
+                (16.0, 14.0),
+                (15.0, 17.0),
+                (16.0, 20.0),
+                (14.0, 20.0),
+            ]),
+            "yunet".into(),
+        )
+    }
+
+    #[test]
+    fn replace_face_scans_preserves_person_assignment() {
+        let mut repo = test_repo();
+        let old_faces = repo.find_faces_for_picture(&PictureId::new(1)).unwrap();
+        assert_eq!(old_faces.len(), 1);
+        assert_eq!(old_faces[0].person_id, Some(PersonId::new(10)));
+
+        repo.replace_face_scans(
+            &PictureId::new(1),
+            &[face(FaceRect {
+                x: 10.0,
+                y: 10.0,
+                width: 20.0,
+                height: 20.0,
+            })],
+            "yunet",
+            &old_faces,
+        )
+        .unwrap();
+
+        let con = repo.con.lock().unwrap();
+        let mut stmt = con
+            .prepare(
+                "SELECT person_id, is_confirmed, is_thumbnail, is_ignored, model_name
+                 FROM pictures_faces WHERE picture_id = 1",
+            )
+            .unwrap();
+        let rows: Vec<(Option<i64>, bool, bool, bool, String)> = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })
+            .unwrap()
+            .flatten()
+            .collect();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, Some(10));
+        assert!(rows[0].1);
+        assert!(rows[0].2);
+        assert!(!rows[0].3);
+        assert_eq!(rows[0].4, "yunet");
+    }
+
+    #[test]
+    fn replace_face_scans_keeps_unmatched_named_face() {
+        let mut repo = test_repo();
+        let old_faces = repo.find_faces_for_picture(&PictureId::new(1)).unwrap();
+
+        repo.replace_face_scans(
+            &PictureId::new(1),
+            &[face(FaceRect {
+                x: 200.0,
+                y: 200.0,
+                width: 40.0,
+                height: 40.0,
+            })],
+            "yunet",
+            &old_faces,
+        )
+        .unwrap();
+
+        let con = repo.con.lock().unwrap();
+        let count: i64 = con
+            .query_row(
+                "SELECT COUNT(*) FROM pictures_faces WHERE picture_id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+
+        let named: i64 = con
+            .query_row(
+                "SELECT COUNT(*) FROM pictures_faces
+                 WHERE picture_id = 1 AND person_id = 10",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(named, 1);
     }
 }

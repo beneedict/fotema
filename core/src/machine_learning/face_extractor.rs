@@ -10,6 +10,7 @@ use crate::thumbnailify::{ThumbnailSize, Thumbnailer};
 use anyhow::*;
 
 use super::nms::Nms;
+use super::yunet::YuNetDetector;
 
 use std::path::{Path, PathBuf};
 use std::result::Result::Ok;
@@ -78,6 +79,25 @@ pub struct Face {
 }
 
 impl Face {
+    /// Construct a detected face. Used by detectors and tests.
+    pub fn new(
+        thumbnail_path: PathBuf,
+        bounds_path: PathBuf,
+        bounds: Rect,
+        confidence: f32,
+        landmarks: Option<Vec<(f32, f32)>>,
+        model_name: String,
+    ) -> Self {
+        Self {
+            thumbnail_path,
+            bounds_path,
+            bounds,
+            confidence,
+            landmarks,
+            model_name,
+        }
+    }
+
     fn landmark(&self, index: usize) -> Option<(f32, f32)> {
         self.landmarks
             .as_ref()
@@ -115,15 +135,56 @@ pub struct FaceExtractor {
     detectors: Vec<(Box<dyn rust_faces::FaceDetector>, String)>,
 }
 
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum FaceDetectionModel {
+    /// YuNet via OpenCV. Fast and high recall.
+    #[default]
+    YuNet,
+    /// The previous BlazeFace detector.
+    BlazeFace,
+}
+
+impl FaceDetectionModel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::YuNet => "YuNet",
+            Self::BlazeFace => "BlazeFace",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "YuNet" => Some(Self::YuNet),
+            "BlazeFace" => Some(Self::BlazeFace),
+            _ => None,
+        }
+    }
+
+    /// Value stored in `pictures_face_scans.detector`.
+    pub fn detector_name(&self) -> &'static str {
+        match self {
+            Self::YuNet => "yunet",
+            Self::BlazeFace => "blazeface",
+        }
+    }
+}
+
 pub struct FaceExtractorBuilder {
     faces_base_path: PathBuf,
     thumbnail_base_path: PathBuf,
     thumbnailer: Thumbnailer,
+    cache_dir: PathBuf,
+    model: FaceDetectionModel,
     env: Environment,
 }
 
 impl FaceExtractorBuilder {
-    pub fn new(base_path: &Path, thumbnailer: Thumbnailer) -> Result<FaceExtractorBuilder> {
+    pub fn new(
+        base_path: &Path,
+        cache_dir: &Path,
+        thumbnailer: Thumbnailer,
+        model: FaceDetectionModel,
+    ) -> Result<FaceExtractorBuilder> {
         let faces_base_path = PathBuf::from(base_path).join("faces");
         let _ = std::fs::create_dir_all(&faces_base_path)?;
 
@@ -139,6 +200,8 @@ impl FaceExtractorBuilder {
             faces_base_path,
             thumbnail_base_path,
             thumbnailer,
+            cache_dir: cache_dir.to_path_buf(),
+            model,
             env,
         })
     }
@@ -146,19 +209,23 @@ impl FaceExtractorBuilder {
     pub fn build(&self) -> Result<FaceExtractor> {
         let mut detectors: Vec<(Box<dyn rust_faces::FaceDetector>, String)> = vec![];
 
-        let bz_params_default = BlazeFaceParams::default();
+        match self.model {
+            FaceDetectionModel::YuNet => {
+                let yunet = YuNetDetector::new(&self.cache_dir)?;
+                detectors.push((Box::new(yunet), "yunet".into()));
+            }
+            FaceDetectionModel::BlazeFace => {
+                let bz_params_default = BlazeFaceParams::default();
 
-        let blaze_face_default =
-            FaceDetectorBuilder::new(FaceDetection::BlazeFace640(bz_params_default.clone()))
+                let blaze_face_default = FaceDetectorBuilder::new(FaceDetection::BlazeFace640(
+                    bz_params_default.clone(),
+                ))
                 .download()
                 .build(&self.env)?;
 
-        detectors.push((blaze_face_default, "blaze_face_640_default".into()));
-
-        // MTCNN intentionally not used: running it as a second detector on every
-        // photo roughly doubled face-detection time (its image-pyramid cascade is
-        // expensive on real photos: ~1.2s/photo measured). BlazeFace alone is
-        // fast and sufficient. Re-add here if higher recall is needed.
+                detectors.push((blaze_face_default, "blaze_face_640_default".into()));
+            }
+        }
 
         Ok(FaceExtractor {
             faces_base_path: self.faces_base_path.clone(),
@@ -207,6 +274,11 @@ impl FaceExtractor {
             candidate.picture_id,
             faces.len()
         );
+
+        let scan_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
 
         let faces = faces
             .into_iter()
@@ -268,7 +340,7 @@ impl FaceExtractor {
                 let thumbnail = thumbnail.thumbnail(200, 200);
                 let thumbnail_path = self
                     .thumbnail_base_path
-                    .join(format!("{}_{}.jpg", &thumbnail_hash, index));
+                    .join(format!("{}_{}_{}.jpg", &thumbnail_hash, index, scan_id));
                 // Display-only crop: standard JPEG quality is fine.
                 save_face_jpeg(&thumbnail, &thumbnail_path, 82);
 
@@ -288,7 +360,7 @@ impl FaceExtractor {
 
                 let bounds_path = self
                     .faces_base_path
-                    .join(format!("{}_{}.jpg", &thumbnail_hash, index));
+                    .join(format!("{}_{}_{}.jpg", &thumbnail_hash, index, scan_id));
                 // This crop is fed to SFace for recognition, so keep quality
                 // high to avoid perturbing the embeddings.
                 save_face_jpeg(&bounds_img, &bounds_path, 95);

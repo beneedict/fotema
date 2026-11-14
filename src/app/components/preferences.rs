@@ -14,6 +14,7 @@ use tracing::{error, info};
 
 use crate::app::AlbumSort;
 use crate::app::FaceDetectionMode;
+use crate::app::FaceDetectionModel;
 use crate::app::{Settings, SettingsState};
 use crate::fl;
 use crate::host_path;
@@ -24,6 +25,7 @@ pub struct PreferencesDialog {
     parent: adw::ApplicationWindow,
     dialog: adw::PreferencesDialog,
     album_sort: adw::ComboRow,
+    face_detection_model_row: adw::ComboRow,
 
     settings_state: SettingsState,
 
@@ -58,6 +60,8 @@ pub enum PreferencesInput {
 
     UpdateFaceDetectionMode(FaceDetectionMode),
 
+    UpdateFaceDetectionModel(FaceDetectionModel),
+
     UpdateFaceRecognitionAuto(bool),
 
     /// Enable or disable reading and writing XMP face tags.
@@ -79,6 +83,9 @@ pub enum PreferencesInput {
 pub enum PreferencesOutput {
     /// Start face detection right now.
     EnableFaceDetection,
+
+    /// Face detector changed: scan pictures that were scanned with the old detector.
+    FaceDetectionModelChanged,
 
     /// Process motion photos right now.
     ProcessMotionPhotos,
@@ -167,6 +174,24 @@ impl SimpleAsyncComponent for PreferencesDialog {
                         },
                     },
 
+                    #[local_ref]
+                    face_detection_model_row -> adw::ComboRow {
+                        set_title: &fl!("prefs-processing-face-detection-model"),
+                        set_subtitle: &fl!("prefs-processing-face-detection-model", "subtitle"),
+
+                        #[watch]
+                        set_sensitive: model.is_face_detection_active(),
+
+                        connect_selected_item_notify[sender] => move |row| {
+                            let model = if row.selected() == 1 {
+                                FaceDetectionModel::BlazeFace
+                            } else {
+                                FaceDetectionModel::YuNet
+                            };
+                            let _ = sender.input_sender().send(PreferencesInput::UpdateFaceDetectionModel(model));
+                        },
+                    },
+
                     adw::SwitchRow {
                         set_title: &fl!("prefs-processing-recognition-auto"),
                         set_subtitle: &fl!("prefs-processing-recognition-auto", "subtitle"),
@@ -236,6 +261,13 @@ impl SimpleAsyncComponent for PreferencesDialog {
             .active(settings_state.read().face_detection_mode == FaceDetectionMode::On)
             .build();
 
+        let face_detection_model_row = adw::ComboRow::new();
+        let face_detection_models = gtk::StringList::new(&[
+            &fl!("prefs-processing-face-detection-model-yunet"),
+            &fl!("prefs-processing-face-detection-model-blazeface"),
+        ]);
+        face_detection_model_row.set_model(Some(&face_detection_models));
+
         let album_sort_row = adw::ComboRow::new();
         let list = gtk::StringList::new(&[
             &fl!("prefs-albums-chronological-sort", "ascending"),
@@ -249,6 +281,7 @@ impl SimpleAsyncComponent for PreferencesDialog {
             dialog: dialog.clone(),
             settings: settings_state.read().clone(),
             album_sort: album_sort_row.clone(),
+            face_detection_model_row: face_detection_model_row.clone(),
         };
 
         let widgets = view_output!();
@@ -274,6 +307,12 @@ impl SimpleAsyncComponent for PreferencesDialog {
                 };
 
                 self.album_sort.set_selected(index);
+
+                let model_index = match self.settings.face_detection_model {
+                    FaceDetectionModel::YuNet => 0,
+                    FaceDetectionModel::BlazeFace => 1,
+                };
+                self.face_detection_model_row.set_selected(model_index);
             }
             PreferencesInput::UpdateShowSelfies(show_selfies) => {
                 info!("Update show selfies: {}", show_selfies);
@@ -313,6 +352,12 @@ impl SimpleAsyncComponent for PreferencesDialog {
                 if mode == FaceDetectionMode::On {
                     let _ = sender.output(PreferencesOutput::EnableFaceDetection);
                 }
+            }
+            PreferencesInput::UpdateFaceDetectionModel(model) => {
+                info!("Update face detection model: {:?}", model);
+                self.settings.face_detection_model = model;
+                *self.settings_state.write() = self.settings.clone();
+                let _ = sender.output(PreferencesOutput::FaceDetectionModelChanged);
             }
             PreferencesInput::Sort(mode) => {
                 info!("Update album sort: {:?}", mode);

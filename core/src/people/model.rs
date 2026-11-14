@@ -158,6 +158,20 @@ impl Rect {
     }
 }
 
+/// A face row from the database, used when re-detecting a picture with a new
+/// detector. Person assignments and user decisions are carried over to the
+/// matching new face.
+#[derive(Debug, Clone)]
+pub struct ExistingFace {
+    pub face_id: FaceId,
+    pub bounds: Rect,
+    pub is_source_original: bool,
+    pub person_id: Option<PersonId>,
+    pub is_confirmed: bool,
+    pub is_thumbnail: bool,
+    pub is_ignored: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct Face {
     pub face_id: FaceId,

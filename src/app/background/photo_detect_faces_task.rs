@@ -16,13 +16,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use futures::executor::block_on;
 use tracing::{error, info};
 
-use fotema_core::machine_learning::face_extractor::{FaceExtractor, FaceExtractorBuilder};
+use fotema_core::machine_learning::face_extractor::{
+    FaceExtractor, FaceExtractorBuilder,
+};
 use fotema_core::people;
 use fotema_core::people::FaceDetectionCandidate;
 use fotema_core::photo;
 use fotema_core::photo::PictureId;
 use fotema_core::thumbnailify::Thumbnailer;
 
+use crate::app::SettingsState;
 use crate::app::components::progress_monitor::{ProgressMonitor, ProgressMonitorInput, TaskName};
 use deadpool::managed;
 
@@ -76,17 +79,21 @@ pub struct PhotoDetectFacesTask {
 
     /// Base directory for storing photo faces
     faces_base_dir: PathBuf,
+    /// Cache directory for the YuNet model.
+    cache_dir: PathBuf,
     thumbnailer: Thumbnailer,
 
     photo_repo: photo::Repository,
     people_repo: people::Repository,
+
+    /// Read at the start of each scan so detector changes apply to the next run.
+    settings_state: SettingsState,
 
     progress_monitor: Arc<Reducer<ProgressMonitor>>,
 }
 
 impl PhotoDetectFacesTask {
     fn detect_for_one(&self, sender: ComponentSender<Self>, picture_id: PictureId) -> Result<()> {
-        self.people_repo.delete_faces(picture_id)?;
         let result = self.photo_repo.get_face_detection_candidate(&picture_id)?;
         if let Some(candidate) = result {
             let unprocessed = vec![candidate];
@@ -97,9 +104,10 @@ impl PhotoDetectFacesTask {
     }
 
     fn detect_for_all(&self, sender: ComponentSender<Self>) -> Result<()> {
+        let model = self.settings_state.read().face_detection_model;
         let unprocessed: Vec<FaceDetectionCandidate> = self
             .photo_repo
-            .find_face_detection_candidates()?
+            .find_face_detection_candidates(model.detector_name())?
             .into_iter()
             .filter(|candidate| candidate.path.sandbox_path.exists())
             .collect();
@@ -140,8 +148,13 @@ impl PhotoDetectFacesTask {
         // We must do this before using the object pool and parallel processing, otherwise
         // multiple threads will try to download the same model.
         // FIXME add a method to the face detection library to download models.
-        let face_extractor_builder =
-            FaceExtractorBuilder::new(&self.faces_base_dir, self.thumbnailer.clone())?;
+        let model = self.settings_state.read().face_detection_model;
+        let face_extractor_builder = FaceExtractorBuilder::new(
+            &self.faces_base_dir,
+            &self.cache_dir,
+            self.thumbnailer.clone(),
+            model,
+        )?;
         let _ = face_extractor_builder.build();
 
         let detector_pool_manager = FaceDetectorPoolManager {
@@ -166,13 +179,28 @@ impl PhotoDetectFacesTask {
 
                 // Careful! panic::catch_unwind returns Ok(Err) if the evaluated expression returns
                 // an error but doesn't panic.
+                let old_faces = match self.people_repo.find_faces_for_picture(&candidate.picture_id) {
+                    Ok(faces) => faces,
+                    Err(e) => {
+                        error!("Failed to load existing faces: {:?}", e);
+                        Vec::new()
+                    }
+                };
+
                 let result = block_on(async {
                     match detector_pool.get().await {
                         Ok(mut detector) => detector.extract_faces(&candidate).await,
                         Err(e) => Err(anyhow!("Failed to acquire face detector: {e:?}")),
                     }
                 })
-                .and_then(|faces| repo.clone().add_face_scans(&candidate.picture_id, &faces));
+                .and_then(|faces| {
+                    repo.clone().replace_face_scans(
+                        &candidate.picture_id,
+                        &faces,
+                        model.detector_name(),
+                        &old_faces,
+                    )
+                });
 
                 if result.is_err() {
                     error!(
@@ -206,21 +234,34 @@ impl Worker for PhotoDetectFacesTask {
         Thumbnailer,
         photo::Repository,
         people::Repository,
+        PathBuf,
+        SettingsState,
         Arc<Reducer<ProgressMonitor>>,
     );
     type Input = PhotoDetectFacesTaskInput;
     type Output = PhotoDetectFacesTaskOutput;
 
     fn init(
-        (stop, faces_base_dir, thumbnailer, photo_repo, people_repo, progress_monitor): Self::Init,
-        _sender: ComponentSender<Self>,
-    ) -> Self {
-        PhotoDetectFacesTask {
+        (
             stop,
             faces_base_dir,
             thumbnailer,
             photo_repo,
             people_repo,
+            cache_dir,
+            settings_state,
+            progress_monitor,
+        ): Self::Init,
+        _sender: ComponentSender<Self>,
+    ) -> Self {
+        PhotoDetectFacesTask {
+            stop,
+            faces_base_dir,
+            cache_dir,
+            thumbnailer,
+            photo_repo,
+            people_repo,
+            settings_state,
             progress_monitor,
         }
     }
