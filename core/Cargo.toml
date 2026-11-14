@@ -10,36 +10,36 @@ edition = "2024"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.101"
-base64 = "0.23.0"
-chrono = "0.4.44"
-fast_image_resize = { version = "6.0.0", features = ["image"] }
+anyhow = "1.0.104"
+base64 = "0.23.1"
+chrono = "0.4.45"
+fast_image_resize = { version = "6.1.0", features = ["image"] }
 ffmpeg-next = "9.0.0"
 gdk4 = "0.11.5"
 gio = "0.22.10"
-glycin = { version = "4.0.2", features = ["gdk4"] }
-h3o = "0.11.0"
-image = "0.25.9"
-kamadak-exif = "0.6.1"
-ort = { version = "2.0.0-rc.14",  }
+glycin = { version = "4.0.5", features = ["gdk4"] }
+h3o = "0.11.1"
+image = "0.25.10"
+kamadak-exif = "0.6.2"
+ort = { version = "2.0.0-rc.15",  }
 rayon = "1.11.0"
 refinery = { version = "0.10.0", features = ["rusqlite"] }
 rusqlite = { version = "0.40.2", features = ["bundled", "chrono"] }
 rust-faces = {git = "https://github.com/blissd/fotema-rust-faces.git", rev = "0bf0080431b7614c739014830a4eac16fae31b58", features = ["viz"]}
-sm_motion_photo = "0.1.5"
+sm_motion_photo = "0.1.6"
 strum = { version = "0.28", features = ["derive"] }
 tempfile = "3.27.0"
 tracing = "0.1.44"
 walkdir = "2.5.0"
-opencv = {version = "0.101.0", default-features = false, features = ["clang-runtime", "features2d", "objdetect", "imgcodecs", "dnn"]}
+opencv = {version = "0.102.0", default-features = false, features = ["clang-runtime", "features2d", "objdetect", "imgcodecs", "dnn"]}
 itertools = "0.14.0"
-reqwest = { version = "0.13.4", features = ["blocking"] }
-futures = "0.3.32"
-url = "2.5.7"
-md5 = "0.8.0"
-sha2 = "0.11"
+reqwest = { version = "0.13.5", features = ["blocking"] }
+futures = "0.3.34"
+url = "2.5.8"
+md5 = "0.8.1"
+sha2 = "0.11.1"
 quick-xml = "0.37.5"
-png = "0.18.0"
-thiserror = "2.0.18"
+png = "0.18.1"
+thiserror = "2.0.20"
 byteorder = "1.5.0"
 video-rs = {version = "0.12", features = ["ndarray"]}

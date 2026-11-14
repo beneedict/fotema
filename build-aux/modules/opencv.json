@@ -33,9 +33,9 @@
     "name": "opencv",
     "sources": [
         {
-            "sha256": "b0528f5a1d379d59d4701cb28c36e22214cc51cf64594e5b56f2d3e6c0233095",
+            "sha256": "638c1dae7e37e45afea21aa217dc667ad7cf57acc66cdf652c074f1e0e5ad6d2",
             "type": "archive",
-            "url": "https://github.com/opencv/opencv/archive/5.0.0.tar.gz",
+            "url": "https://github.com/opencv/opencv/archive/5.1.0.tar.gz",
             "x-checker-data": {
                 "project-id": 6615,
                 "stable-only": true,
